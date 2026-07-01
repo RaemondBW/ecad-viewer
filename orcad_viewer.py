@@ -148,6 +148,10 @@ button.tool:hover{border-color:var(--ink-3)}
 .sheet:hover{background:var(--paper-2)}
 .sheet.active{background:var(--paper-2);border-left-color:var(--accent);font-weight:600}
 .sheet .cnt{color:var(--ink-3);font-size:10px;font-family:var(--font-mono)}
+/* pages containing the pinned net */
+.sheet.has-net{border-left-color:var(--wire-hi)}
+.sheet.has-net .cnt{color:var(--wire-hi);font-weight:700}
+.sheet.has-net .cnt::before{content:'●';margin-right:5px;font-size:7px;vertical-align:middle}
 #stage{flex:1;position:relative;overflow:hidden;background:var(--paper)}
 #svg{width:100%;height:100%;display:block;cursor:grab;touch-action:none}
 #svg.panning{cursor:grabbing}
@@ -268,6 +272,26 @@ MODEL.sheets.forEach((s,i)=>{
   sheetsEl.appendChild(el);
 });
 
+// net key -> Set of sheet indices that contain it (named nets merge by name,
+// so this catches every page a net appears on)
+const netSheets = (()=>{
+  const m=new Map();
+  MODEL.sheets.forEach((s,i)=>{
+    const add=k=>{ if(!k)return; (m.get(k)||m.set(k,new Set()).get(k)).add(i); };
+    (s.wires||[]).forEach(w=>add(w[4]));
+    (s.parts||[]).forEach(p=>(p.pins||[]).forEach(pin=>add(pin[2])));
+    (s.connectors||[]).forEach(f=>add(f.key));
+    (s.labels||[]).forEach(l=>add(l.key));
+  });
+  return m;
+})();
+// mark, in the sheet index, every page that carries net k (null clears)
+function markNetSheets(k){
+  const set = k?netSheets.get(k):null;
+  document.querySelectorAll('#sheets .sheet').forEach(el=>
+    el.classList.toggle('has-net', !!(set&&set.has(+el.dataset.i))));
+}
+
 function esc(s){return (s+'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 
 // Draw the OrCAD-style page border with a zone-reference grid (numbers along
@@ -349,9 +373,8 @@ function flagSVG(f, ctr){
     g+=L(P(0,0),P(4,0))+L(P(4,-5),P(4,5))+L(P(7,-3),P(7,3))+L(P(10,-1.5),P(10,1.5));
     g+=sideLabel();
   } else if(f.kind==='pwr'){
-    // filled power-rail pennant pointing outward
-    const pts=[P(1,-3),P(7,-3),P(7,-5),P(13,0),P(7,5),P(7,3),P(1,3)];
-    g+=`<polygon class="flag arrow" points="${pts.map(M).join(' ')}"/>`;
+    // power rail: a short bar perpendicular to the wire at its end (no arrow)
+    g+=L(P(0,-5),P(0,5));
     g+=sideLabel();
   } else {
     // off-page (in/out) port. Each net stub carries two of these, one at each
@@ -456,7 +479,7 @@ function symSVG(type,a,b){
 function netId(k){return 'n'+btoa(unescape(encodeURIComponent(k))).replace(/[^a-zA-Z0-9]/g,'');}
 
 function selectSheet(i){
-  cur=i; pinnedNet=null;
+  cur=i;   // keep pinnedNet so a highlighted net carries across pages
   document.querySelectorAll('.sheet').forEach(e=>e.classList.toggle('active',+e.dataset.i===i));
   render();
   fit();
@@ -552,6 +575,7 @@ function render(){
   info.textContent=`${s.parts.length} parts · ${s.wires.length} wires · ${Object.keys(s.nets).length} nets`;
   attachHover();
   applyView();
+  if(pinnedNet) hiNet(pinnedNet);   // re-apply a carried-over net highlight
 }
 
 // ── hover / highlight ──
@@ -575,20 +599,29 @@ function diffReason(des){
   return '';
 }
 function hiNet(k){
-  scene.classList.add('dimmed');
-  scene.querySelectorAll('[data-net]').forEach(el=>{
+  const els=[...scene.querySelectorAll('[data-net]')];
+  const here = els.some(el=>el.dataset.net===k && k!=='');
+  scene.classList.toggle('dimmed', here);
+  els.forEach(el=>{
     const on = el.dataset.net===k && k!=='';
     el.classList.toggle('hot',on);
-    el.classList.toggle('dim',!on);
+    el.classList.toggle('dim', here && !on);
   });
-  const s=MODEL.sheets[cur]; const nm=s.nets[k];
-  info.textContent = (nm||k) + ' — ' +
+  markNetSheets(k);
+  // index of the other pages carrying this net
+  const pages=[...(netSheets.get(k)||[])].filter(i=>i!==cur)
+    .map(i=>MODEL.sheets[i].page||MODEL.sheets[i].view);
+  const also = pages.length?' · also on '+pages.join(', '):'';
+  const s=MODEL.sheets[cur];
+  if(here) info.textContent = (s.nets[k]||k) + ' — ' +
     scene.querySelectorAll('.pin.hot').length + ' pins, ' +
-    scene.querySelectorAll('.wire.hot').length + ' segments';
+    scene.querySelectorAll('.wire.hot').length + ' segments' + also;
+  else info.textContent = (s.nets[k]||k) + ' — not on this page' + (also||' (no other page)');
 }
 function clearHi(){
   scene.classList.remove('dimmed');
   scene.querySelectorAll('.hot,.dim').forEach(el=>el.classList.remove('hot','dim'));
+  markNetSheets(null);
   const s=MODEL.sheets[cur];
   info.textContent=`${s.parts.length} parts · ${s.wires.length} wires · ${Object.keys(s.nets).length} nets`;
 }
