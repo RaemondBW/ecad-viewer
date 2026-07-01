@@ -156,6 +156,7 @@ button.tool:hover{border-color:var(--ink-3)}
 .gbox{fill:none;stroke:var(--line-2);stroke-width:1;vector-effect:non-scaling-stroke}
 .note{fill:var(--ink-2);font-family:var(--font-ui)}
 .wire{stroke:var(--wire);stroke-width:1;fill:none;vector-effect:non-scaling-stroke}
+.wire.bus{stroke-width:2.8}
 .pin{fill:var(--pin)}
 .comp rect{fill:var(--comp-fill);stroke:var(--comp);stroke-width:1;
   vector-effect:non-scaling-stroke}
@@ -191,6 +192,7 @@ button.tool:hover{border-color:var(--ink-3)}
 .tb-title{fill:var(--ink-tb);font-family:var(--font-ui);font-weight:600}
 .dim{opacity:.18}
 .wire.hot{stroke:var(--wire-hi);stroke-width:2.2}
+.wire.bus.hot{stroke-width:3.6}
 .pin.hot{fill:var(--wire-hi)}
 .nlabel.hot{fill:var(--wire-hi);font-weight:700}
 .comp.hot rect{stroke:var(--comp-hi);stroke-width:2}
@@ -324,7 +326,7 @@ function titleblockSVG(tb, geom){
 // Draw a power/ground/off-page connector glyph at its wire-touch point (x,y),
 // pointing outward along the wire (orient u/d/l/r). The net name sits on the
 // wire side (inward), beside the wire, as OrCAD places a net label.
-function flagSVG(f){
+function flagSVG(f, ctr){
   const x=f.x, y=f.y;
   const dir={u:[0,-1],d:[0,1],l:[-1,0],r:[1,0]}[f.orient||'d'];
   const ux=dir[0],uy=dir[1],vx=-uy,vy=ux;
@@ -332,25 +334,72 @@ function flagSVG(f){
   const M=p=>p[0].toFixed(1)+' '+p[1].toFixed(1);
   const L=(a,b)=>`<line class="flag" x1="${a[0].toFixed(1)}" y1="${a[1].toFixed(1)}" x2="${b[0].toFixed(1)}" y2="${b[1].toFixed(1)}"/>`;
   const nk=f.key?` data-net="${esc(f.key)}"`:'';
+  const vert=(f.orient==='u'||f.orient==='d');
+  // net label beside the wire end (used by gnd/power flags)
+  const sideLabel=()=>{
+    if(!f.net) return '';
+    const lp=P(-3,-3.5);                 // inward along wire, off to one side
+    const lx=lp[0].toFixed(1), ly=lp[1].toFixed(1);
+    const anc=vert?(f.orient==='d'?'start':'end'):(f.orient==='l'?'start':'end');
+    const rot=vert?` transform="rotate(-90 ${lx} ${ly})"`:'';
+    return `<text class="flabel" x="${lx}" y="${ly}" font-size="8" text-anchor="${anc}" dominant-baseline="central"${rot}>${esc(f.net)}</text>`;
+  };
   let g=`<g class="flagg"${nk}>`;
   if(f.kind==='gnd'){
     g+=L(P(0,0),P(4,0))+L(P(4,-5),P(4,5))+L(P(7,-3),P(7,3))+L(P(10,-1.5),P(10,1.5));
-  } else {
-    // filled off-page/power connector pennant pointing outward
+    g+=sideLabel();
+  } else if(f.kind==='pwr'){
+    // filled power-rail pennant pointing outward
     const pts=[P(1,-3),P(7,-3),P(7,-5),P(13,0),P(7,5),P(7,3),P(1,3)];
     g+=`<polygon class="flag arrow" points="${pts.map(M).join(' ')}"/>`;
-  }
-  // net label on the wire (inward) side, offset just off the wire
-  if(f.net){
-    const vert=(f.orient==='u'||f.orient==='d');
-    const lp=P(-3,-3.5);                 // inward along wire, off to one side
-    const lx=lp[0].toFixed(1), ly=lp[1].toFixed(1);
-    if(vert){
-      const anc=f.orient==='d'?'start':'end';
-      g+=`<text class="flabel" x="${lx}" y="${ly}" font-size="8" text-anchor="${anc}" dominant-baseline="central" transform="rotate(-90 ${lx} ${ly})">${esc(f.net)}</text>`;
+    g+=sideLabel();
+  } else {
+    // off-page (in/out) port. Each net stub carries two of these, one at each
+    // end. The in/out indicator goes on the end facing the page centre (the
+    // "inside"); the outer end — pointing toward the sheet edge, where the big
+    // combined PCIE/DDR bus ring runs — shows just the net name and connects to
+    // that bus.
+    const name=f.net||'', fs=8;
+    const toCenter = ctr ? (ux*(ctr[0]-x)+uy*(ctr[1]-y))>0 : (f.orient==='d'||f.orient==='r');
+    const labelOnly=!toCenter;
+    if(labelOnly){
+      // net name running alongside the stub, offset to one side so the wire
+      // does not cut through the text (to the right of vertical stubs, above
+      // horizontal ones), and reading inward from the wire end so it stays
+      // within the net's span rather than sticking out past its end.
+      // grow the text INWARD (opposite the outward orient) so it never spills
+      // past the net end: u/r anchor at the far char, d/l at the first
+      const off=fs*0.7;
+      const lp=P(-2,off), lx=lp[0].toFixed(1), ly=lp[1].toFixed(1);
+      const anc=(f.orient==='u'||f.orient==='r')?'end':'start';
+      const rot=vert?` transform="rotate(-90 ${lx} ${ly})"`:'';
+      g+=`<text class="flabel" x="${lx}" y="${ly}" font-size="${fs}" text-anchor="${anc}" dominant-baseline="central"${rot}>${esc(name)}</text>`;
     } else {
-      const anc=f.orient==='l'?'start':'end';
-      g+=`<text class="flabel" x="${lx}" y="${ly}" font-size="8" text-anchor="${anc}" dominant-baseline="central">${esc(f.net)}</text>`;
+      // flag-arrow banner sized to the name, with the net name inside. The
+      // chevron encodes the recovered signal direction: output points away from
+      // the wire, input points back toward it, bidirectional/unknown points
+      // both ways. The whole symbol sits outboard of the wire end (t>=0) so the
+      // wire terminates at its near corner rather than running into the body.
+      const w=fs*0.7, chev=w;
+      const bodyLen=Math.max(14, name.length*fs*0.6+5);
+      let pts, tc;
+      if(f.dir==='out'){
+        // flat against the wire, single point outward
+        pts=[P(0,-w),P(bodyLen,-w),P(bodyLen+chev,0),P(bodyLen,w),P(0,w)];
+        tc=bodyLen/2;
+      } else if(f.dir==='in'){
+        // near vertex on the wire end (arrow in), flat far end
+        pts=[P(0,0),P(chev,-w),P(bodyLen+chev,-w),P(bodyLen+chev,w),P(chev,w)];
+        tc=chev+bodyLen/2;
+      } else {
+        // bidirectional hexagon: near vertex sits on the wire end (the corner)
+        pts=[P(0,0),P(chev,-w),P(bodyLen+chev,-w),P(bodyLen+2*chev,0),P(bodyLen+chev,w),P(chev,w)];
+        tc=chev+bodyLen/2;
+      }
+      g+=`<polygon class="flag" points="${pts.map(M).join(' ')}"/>`;
+      const tp=P(tc,0), tx=tp[0].toFixed(1), ty=tp[1].toFixed(1);
+      const rot=vert?` transform="rotate(-90 ${tx} ${ty})"`:'';
+      g+=`<text class="flabel" x="${tx}" y="${ty}" font-size="${fs}" text-anchor="middle" dominant-baseline="central"${rot}>${esc(name)}</text>`;
     }
   }
   return g+`</g>`;
@@ -434,9 +483,11 @@ function render(){
     lines.forEach((ln,i)=>{ ts+=`<tspan x="${t.x}" dy="${i===0?0:fs*1.15}">${esc(ln)}</tspan>`; });
     h+=ts+`</text>`;
   }
-  // wires
+  // wires — fused/bus nets (name carries a [lo..hi] range) drawn thicker
+  const isBus=n=>/\[\d+\.\.\d+\]/.test(String(n));
   for(const w of s.wires){
-    h+=`<line class="wire" data-net="${esc(w[4])}" x1="${w[0]}" y1="${w[1]}" x2="${w[2]}" y2="${w[3]}"/>`;
+    const cls=isBus(w[4])?'wire bus':'wire';
+    h+=`<line class="${cls}" data-net="${esc(w[4])}" x1="${w[0]}" y1="${w[1]}" x2="${w[2]}" y2="${w[3]}"/>`;
   }
   // parts
   for(const p of s.parts){
@@ -487,7 +538,8 @@ function render(){
     }
   }
   // power/ground/off-page connector glyphs
-  for(const f of s.connectors||[]) h+=flagSVG(f);
+  const fc = s.frame ? [(s.frame[0]+s.frame[2])/2, (s.frame[1]+s.frame[3])/2] : null;
+  for(const f of s.connectors||[]) h+=flagSVG(f, fc);
   // junction dots (electrical ties)
   for(const j of s.junctions||[]) h+=`<circle class="junction" cx="${j[0]}" cy="${j[1]}" r="1.6"/>`;
   // net labels

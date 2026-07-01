@@ -278,6 +278,7 @@ def load_dsn(path):
             "net_win": net_win,
             "obj_wins": obj_wins,
             "graphics": graphics,
+            "data": data,
         }
     return design
 
@@ -386,6 +387,15 @@ def build_sheets(design):
         pins_set = set((x, y) for inst in insts for _, x, y in inst["pins"])
         flags = _dangling_flags(wires, pins_set, pt, names, pageid)
         flag_keys = set(f["key"] for f in flags if f["key"])
+        # Recovered signal direction (per net) from explicit port symbols; shown
+        # on the connector's flag. Nets without a port symbol stay directionless.
+        port_dirs = _port_directions(page.get("data", b""), flags)
+        for f in flags:
+            d = port_dirs.get(f.get("key"))
+            if d:
+                f["dir"] = d
+        # bridge each stub's outer end to the bus ring it taps (bus-entry gap)
+        out_wires.extend(_bus_stub_links(flags, out_wires))
 
         # Net-name labels on wires — but not where a flag already carries the
         # name (the flag is the port label, as in OrCAD).
@@ -674,6 +684,96 @@ def _flag_kind(net):
             or "VREF" in u or "VTT" in u or u.startswith(("VCC", "VDD")):
         return "pwr"
     return "port"
+
+
+# Hierarchical port / off-page connector symbols carry an explicit signal
+# direction in their name: PORTRIGHT = output, PORTLEFT = input, PORTBOTH and
+# OFFPAGE = bidirectional. The trailing -L/-R is only the symbol's graphical
+# variant, not the direction.
+_PORT_RE = re.compile(rb"(PORT[A-Z]+|OFFPAGE[A-Z]+)-[LR]\x00")
+_PORT_DIR = {"PORTRIGHT": "out", "PORTLEFT": "in", "PORTBOTH": "bi",
+             "PORTNO": "bi", "OFFPAGELEFT": "bi", "OFFPAGERIGHT": "bi"}
+
+
+def _port_directions(data, flags):
+    """Recover in/out direction for connectors that carry an explicit OrCAD port
+    symbol. The placement record stores the symbol's insertion point (i16 x,y at
+    name-end + 6), which sits at a fixed per-symbol offset from the electrical
+    pin. We self-calibrate that offset by finding the single (dx,dy) that lands
+    the most instances of each symbol exactly on the known flag grid, so we can
+    assign directions without hard-coding symbol geometry. Returns
+    {net_key: 'in'|'out'|'bi'} for the connectors we can place confidently."""
+    from collections import defaultdict
+    coords = {(f["x"], f["y"]): f for f in flags}
+    groups = defaultdict(list)   # full symbol name -> [(base, x, y), ...]
+    for m in _PORT_RE.finditer(data):
+        k = m.end() + 6
+        if k + 4 > len(data):
+            continue
+        x, y = struct.unpack_from("<hh", data, k)
+        groups[m.group(0)].append((m.group(1).decode("latin1"), x, y))
+    out = {}
+    for pts in groups.values():
+        best = (-1, 0, 0)
+        for dx in range(-20, 21, 5):
+            for dy in range(-20, 21, 5):
+                c = sum(1 for _, x, y in pts if (x + dx, y + dy) in coords)
+                if c > best[0]:
+                    best = (c, dx, dy)
+        c, dx, dy = best
+        if c == 0:
+            continue   # symbol we can't place (e.g. far-offset bus ports)
+        for base, x, y in pts:
+            f = coords.get((x + dx, y + dy))
+            if f and f.get("key"):
+                out.setdefault(f["key"], _PORT_DIR.get(base, "bi"))
+    return out
+
+
+_BUS_RE = re.compile(r"\[\d+\.\.\d+\]")
+
+
+def _bus_stub_links(flags, out_wires):
+    """Join each off-page stub's outer end to the bus it taps. OrCAD hides this
+    behind a bus-entry symbol we don't parse, leaving a ~10-mil gap between the
+    dangling signal end and the perimeter bus ring. For every port flag we cast a
+    ray outward along its orientation; if it reaches a bus wire (net name with a
+    `[lo..hi]` range) within a short distance and aligned with the ray, we emit a
+    connecting segment carrying the signal net. Inner ends point toward the empty
+    page centre, away from the perimeter buses, so they never link. Returns extra
+    `[x1,y1,x2,y2,key]` wire rows."""
+    MAXD = 50
+    bh, bv = [], []   # horizontal / vertical bus segments
+    for x1, y1, x2, y2, key in out_wires:
+        if not _BUS_RE.search(str(key)):
+            continue
+        if y1 == y2:
+            bh.append((y1, min(x1, x2), max(x1, x2)))
+        elif x1 == x2:
+            bv.append((x1, min(y1, y2), max(y1, y2)))
+    dirs = {"u": (0, -1), "d": (0, 1), "l": (-1, 0), "r": (1, 0)}
+    links = []
+    for f in flags:
+        if f.get("kind") != "port":
+            continue
+        x, y = f["x"], f["y"]
+        ux, uy = dirs.get(f.get("orient", "d"), (0, 1))
+        best, tgt = None, None
+        if uy != 0:                       # vertical ray → horizontal bus
+            for by, xlo, xhi in bh:
+                if xlo - 1 <= x <= xhi + 1:
+                    d = (by - y) * uy
+                    if 0 < d <= MAXD and (best is None or d < best):
+                        best, tgt = d, [x, y, x, by, f["key"]]
+        else:                             # horizontal ray → vertical bus
+            for bx, ylo, yhi in bv:
+                if ylo - 1 <= y <= yhi + 1:
+                    d = (bx - x) * ux
+                    if 0 < d <= MAXD and (best is None or d < best):
+                        best, tgt = d, [bx, y, x, y, f["key"]]
+        if tgt is not None:
+            links.append(tgt)
+    return links
 
 
 def _dangling_flags(wires, pins, point_nets, names, pageid):
