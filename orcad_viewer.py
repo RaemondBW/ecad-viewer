@@ -339,11 +339,19 @@ function flagSVG(f){
     const pts=[P(0,-4),P(9,-4),P(14,0),P(9,4),P(0,4)];
     g+=`<polygon class="flag" points="${pts.map(M).join(' ')}"/>`;
   }
-  // net label just beyond the glyph, anchored by direction
+  // net label just beyond the glyph; on vertical wires (u/d) rotate it 90° so
+  // it runs along the wire instead of overlapping neighbours (as OrCAD does)
   if(f.net){
     const lp=P(f.kind==='port'?17:14,0);
-    const anc=f.orient==='l'?'end':(f.orient==='r'?'start':'middle');
-    g+=`<text class="flabel" x="${lp[0].toFixed(1)}" y="${lp[1].toFixed(1)}" font-size="8" text-anchor="${anc}" dominant-baseline="central">${esc(f.net)}</text>`;
+    const lx=lp[0].toFixed(1), ly=lp[1].toFixed(1);
+    if(f.orient==='u'||f.orient==='d'){
+      // read bottom-to-top (rotate 270°); extend outward from the glyph
+      const anc=f.orient==='d'?'end':'start';
+      g+=`<text class="flabel" x="${lx}" y="${ly}" font-size="8" text-anchor="${anc}" dominant-baseline="central" transform="rotate(-90 ${lx} ${ly})">${esc(f.net)}</text>`;
+    } else {
+      const anc=f.orient==='l'?'end':'start';
+      g+=`<text class="flabel" x="${lx}" y="${ly}" font-size="8" text-anchor="${anc}" dominant-baseline="central">${esc(f.net)}</text>`;
+    }
   }
   return g+`</g>`;
 }
