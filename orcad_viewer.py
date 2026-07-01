@@ -174,6 +174,7 @@ button.tool:hover{border-color:var(--ink-3)}
 .junction{fill:var(--junction);stroke:none}
 .flag{fill:none;stroke:var(--comp);stroke-width:1.2;vector-effect:non-scaling-stroke;stroke-linejoin:round;stroke-linecap:round}
 .flag.fill{fill:var(--comp)}
+.flag.arrow{fill:var(--ink-2);stroke:var(--ink-2)}
 .flabel{fill:var(--netlabel);font-family:var(--font-mono)}
 .flagg.hot .flag{stroke:var(--wire-hi)}
 .flagg.hot .flag.fill{fill:var(--wire-hi)}
@@ -321,7 +322,8 @@ function titleblockSVG(tb, geom){
 }
 
 // Draw a power/ground/off-page connector glyph at its wire-touch point (x,y),
-// pointing outward along the wire (orient u/d/l/r), with the net label.
+// pointing outward along the wire (orient u/d/l/r). The net name sits on the
+// wire side (inward), beside the wire, as OrCAD places a net label.
 function flagSVG(f){
   const x=f.x, y=f.y;
   const dir={u:[0,-1],d:[0,1],l:[-1,0],r:[1,0]}[f.orient||'d'];
@@ -332,24 +334,22 @@ function flagSVG(f){
   const nk=f.key?` data-net="${esc(f.key)}"`:'';
   let g=`<g class="flagg"${nk}>`;
   if(f.kind==='gnd'){
-    g+=L(P(0,0),P(5,0))+L(P(5,-6),P(5,6))+L(P(8,-4),P(8,4))+L(P(11,-2),P(11,2));
-  } else if(f.kind==='pwr'){
-    g+=L(P(0,0),P(5,0))+`<polygon class="flag fill" points="${M(P(5,-4))} ${M(P(5,4))} ${M(P(10,0))}"/>`;
+    g+=L(P(0,0),P(4,0))+L(P(4,-5),P(4,5))+L(P(7,-3),P(7,3))+L(P(10,-1.5),P(10,1.5));
   } else {
-    const pts=[P(0,-4),P(9,-4),P(14,0),P(9,4),P(0,4)];
-    g+=`<polygon class="flag" points="${pts.map(M).join(' ')}"/>`;
+    // filled off-page/power connector pennant pointing outward
+    const pts=[P(1,-3),P(7,-3),P(7,-5),P(13,0),P(7,5),P(7,3),P(1,3)];
+    g+=`<polygon class="flag arrow" points="${pts.map(M).join(' ')}"/>`;
   }
-  // net label just beyond the glyph; on vertical wires (u/d) rotate it 90° so
-  // it runs along the wire instead of overlapping neighbours (as OrCAD does)
+  // net label on the wire (inward) side, offset just off the wire
   if(f.net){
-    const lp=P(f.kind==='port'?17:14,0);
+    const vert=(f.orient==='u'||f.orient==='d');
+    const lp=P(-3,-3.5);                 // inward along wire, off to one side
     const lx=lp[0].toFixed(1), ly=lp[1].toFixed(1);
-    if(f.orient==='u'||f.orient==='d'){
-      // read bottom-to-top (rotate 270°); extend outward from the glyph
-      const anc=f.orient==='d'?'end':'start';
+    if(vert){
+      const anc=f.orient==='d'?'start':'end';
       g+=`<text class="flabel" x="${lx}" y="${ly}" font-size="8" text-anchor="${anc}" dominant-baseline="central" transform="rotate(-90 ${lx} ${ly})">${esc(f.net)}</text>`;
     } else {
-      const anc=f.orient==='l'?'end':'start';
+      const anc=f.orient==='l'?'start':'end';
       g+=`<text class="flabel" x="${lx}" y="${ly}" font-size="8" text-anchor="${anc}" dominant-baseline="central">${esc(f.net)}</text>`;
     }
   }
@@ -470,8 +470,11 @@ function render(){
       }
     }
     h+=`</g>`;
-    for(const pin of p.pins){
-      h+=`<circle class="pin" data-net="${esc(pin[2])}" cx="${pin[0]}" cy="${pin[1]}" r="1.8"/>`;
+    // small connection dots at passive pins only; box (IC) pins would sit on
+    // top of the pin-name text, so skip them there
+    if(p.sym!=='box'){
+      for(const pin of p.pins)
+        h+=`<circle class="pin" data-net="${esc(pin[2])}" cx="${pin[0]}" cy="${pin[1]}" r="1"/>`;
     }
   }
   // removed parts (ghost) — placed at their old page position if same sheet name
@@ -486,7 +489,7 @@ function render(){
   // power/ground/off-page connector glyphs
   for(const f of s.connectors||[]) h+=flagSVG(f);
   // junction dots (electrical ties)
-  for(const j of s.junctions||[]) h+=`<circle class="junction" cx="${j[0]}" cy="${j[1]}" r="3"/>`;
+  for(const j of s.junctions||[]) h+=`<circle class="junction" cx="${j[0]}" cy="${j[1]}" r="1.6"/>`;
   // net labels
   for(const l of s.labels){
     h+=`<text class="nlabel" data-net="${esc(l.key)}" x="${l.x}" y="${l.y-3}" font-size="9">${esc(l.text)}</text>`;
