@@ -206,14 +206,12 @@ def _parse_instances(data, endpoints, obj_wins, bound):
         end = bounds[i + 1]
         after = off + len(pkg) + len(".Normal") + 1
         strs = [s for _, s in _strings_in(data, after, end)]
-        # designator = last string that isn't the trailing source_package and
-        # isn't a property-value token like  '"  ; source_package == last string.
+        # The instance's strings are: reference designator, source package, then
+        # per-pin net names / property values. The designator is the FIRST real
+        # string (real[1] is the source package). Taking the last strings would
+        # grab a net name for parts with many connected nets (e.g. connectors).
         real = [s for s in strs if s not in ("'\"",)]
-        designator = None
-        if len(real) >= 2:
-            designator = real[-2]
-        elif real:
-            designator = real[0]
+        designator = real[0] if real else None
         pins = _parse_pins_in(data, after, end, endpoints, obj_wins, bound)
         insts.append({
             "designator": designator or f"?{i}",
