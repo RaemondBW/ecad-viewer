@@ -106,589 +106,876 @@ def generate(dsn_path, out_path, diff_path=None):
 HTML_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OrCAD Schematic Viewer</title>
+<title>Schematic Viewer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-:root{
-  --paper:#fbfaf7; --paper-2:#f4f2ec; --panel:#f2f0ea; --panel-2:#e8e5dc;
-  --ink:#161512; --ink-2:#56524a; --ink-3:#8d887d;
-  --line:#ddd9cf; --line-2:#c7c1b4; --accent:#c2410c;
-  --wire:#7a1fa8; --wire-hi:#c2410c; --pin:#b00000; --label:#8a6d3b;
-  --netlabel:#1a45c4; --junction:#b00000; --ink-tb:#111;
-  --comp-fill:#ffffff; --comp-stroke:#9a5300; --comp:#9a5300; --comp-hi:#c2410c;
-  --grid:rgba(0,0,0,0.04);
-  --d-add:#1a7f37; --d-add-soft:rgba(26,127,55,.14);
-  --d-del:#cf222e; --d-del-soft:rgba(207,34,46,.13);
-  --d-chg:#9a6700; --d-chg-soft:rgba(154,103,0,.16);
-  --font-ui:'IBM Plex Sans',system-ui,-apple-system,sans-serif;
-  --font-mono:'IBM Plex Mono','Menlo',monospace;
+html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#E9E7E1;
+  font-family:'IBM Plex Sans',system-ui,sans-serif;color:#221F1A}
+*{box-sizing:border-box}
+::-webkit-scrollbar{width:11px;height:11px}
+::-webkit-scrollbar-thumb{background:#D3CEC2;border-radius:8px;border:3px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-track{background:transparent}
+@keyframes schFlash{0%,100%{opacity:1}50%{opacity:.25}}
+/* chrome */
+.tbtn{padding:5px 11px;font-size:12px;font-weight:500;border:1px solid #D9D4C6;border-radius:8px;
+  background:#FFFFFF;cursor:pointer;color:#3A362E;font-family:inherit;flex-shrink:0}
+.tbtn:hover{border-color:#B9B3A2;background:#F7F5EF}
+.zbtn{border:none;background:transparent;padding:5px 9px;cursor:pointer;font-size:13px;color:#3A362E;font-family:inherit}
+.zbtn:hover{background:#F7F5EF}
+.srch{height:32px;width:270px;padding:0 10px 0 30px;font-family:'IBM Plex Mono',monospace;font-size:12px;
+  border:1px solid #D9D4C6;border-radius:8px;background:#FFFFFF;color:#221F1A;outline:none}
+.srch:focus{border-color:#C2410C;box-shadow:0 0 0 3px rgba(194,65,12,0.10)}
+.sres:hover{background:#F6F4EE}
+.iconx{border:none;background:transparent;cursor:pointer;color:#A19B8E;font-size:15px;line-height:1;padding:2px 6px;border-radius:5px}
+.iconx:hover{background:#EFEBE0;color:#57524A}
+.pinrow:hover{background:#F4F1E9}
+.chip{font-family:'IBM Plex Mono',monospace;font-size:10px;padding:2px 8px;border-radius:999px;
+  border:1px solid #E8CDB6;background:#FBF1E8;color:#B4530F;cursor:pointer}
+.chip:hover{background:#F6E3D3}
+.bomref{font-family:'IBM Plex Mono',monospace;font-size:10px;padding:2px 6px;border-radius:5px;
+  border:1px solid #E4E0D3;background:#FFFFFF;color:#57524A;cursor:pointer}
+.bomref:hover{border-color:#C2410C;color:#C2410C}
+.pgrow{display:flex;gap:10px;align-items:center;padding:5px 12px 5px 20px;cursor:pointer;border-left:3px solid transparent}
+.pgrow:hover{background:#F4F1E9}
+.pgrow.active{border-left-color:#C2410C;background:#F1EDE1}
+/* scene theme (scoped, dark override) */
+.sch-stage{background:#E9E7E1}
+.sch-stage.dark{background:#141519}
+.sch-scene{
+  --p-page:#FFFFFF; --p-pageline:#D9D4C7; --p-zone:#8F8A7D; --p-line:#C6C1B2;
+  --p-glyph:#A9A395; --p-note:#6C675C; --p-wire:#0E7490; --p-pin:#BE123C;
+  --p-comp:#92400E; --p-compfill:#FFFFFF; --p-pinnum:#A19B8E; --p-net:#4338CA;
+  --p-jct:#BE123C; --p-ink:#221F1A; --p-hot:#EA580C;
 }
-*{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%}
-body{font-family:var(--font-ui);color:var(--ink);background:var(--paper);
-  display:flex;flex-direction:column;overflow:hidden}
-header{display:flex;align-items:center;gap:14px;padding:8px 14px;
-  border-bottom:1px solid var(--line);background:var(--panel);flex-shrink:0}
-header .title{font-weight:600;font-size:14px}
-header .sub{color:var(--ink-3);font-size:12px;font-family:var(--font-mono)}
-header .spacer{flex:1}
-.search{display:flex;align-items:center;gap:6px}
-.search input{font-family:var(--font-mono);font-size:12px;padding:4px 8px;
-  border:1px solid var(--line-2);border-radius:6px;background:var(--paper);
-  color:var(--ink);width:180px}
-button.tool{background:var(--paper);border:1px solid var(--line-2);border-radius:6px;
-  color:var(--ink);padding:4px 10px;font-size:12px;cursor:pointer;font-family:var(--font-ui)}
-button.tool:hover{border-color:var(--ink-3)}
-#main{display:flex;flex:1;min-height:0}
-#nav{width:210px;flex-shrink:0;border-right:1px solid var(--line);
-  background:var(--panel);overflow-y:auto;padding:6px 0}
-.nav-h{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
-  color:var(--ink-3);padding:8px 12px 4px}
-.sheet{padding:6px 12px;font-size:12px;cursor:pointer;border-left:2px solid transparent;
-  display:flex;justify-content:space-between;gap:6px;align-items:baseline}
-.sheet:hover{background:var(--paper-2)}
-.sheet.active{background:var(--paper-2);border-left-color:var(--accent);font-weight:600}
-.sheet .cnt{color:var(--ink-3);font-size:10px;font-family:var(--font-mono)}
-/* pages containing the pinned net */
-.sheet.has-net{border-left-color:var(--wire-hi)}
-.sheet.has-net .cnt{color:var(--wire-hi);font-weight:700}
-.sheet.has-net .cnt::before{content:'●';margin-right:5px;font-size:7px;vertical-align:middle}
-#stage{flex:1;position:relative;overflow:hidden;background:var(--paper)}
-#svg{width:100%;height:100%;display:block;cursor:grab;touch-action:none}
-#svg.panning{cursor:grabbing}
-.frame{fill:none;stroke:var(--line-2);stroke-width:1.5;vector-effect:non-scaling-stroke}
-.glyph{stroke:var(--ink-3);stroke-width:1;fill:none;vector-effect:non-scaling-stroke}
-.gbox{fill:none;stroke:var(--line-2);stroke-width:1;vector-effect:non-scaling-stroke}
-.note{fill:var(--ink-2);font-family:var(--font-ui)}
-.wire{stroke:var(--wire);stroke-width:1;fill:none;vector-effect:non-scaling-stroke}
-.wire.bus{stroke-width:2.8}
-.pin{fill:var(--pin)}
-.comp rect{fill:var(--comp-fill);stroke:var(--comp);stroke-width:1;
-  vector-effect:non-scaling-stroke}
-.comp .sym{fill:none;stroke:var(--comp);stroke-width:1.4;vector-effect:non-scaling-stroke;
-  stroke-linejoin:round;stroke-linecap:round}
-.comp .sym.fill{fill:var(--comp)}
-.comp .lead{stroke:var(--comp);stroke-width:1;vector-effect:non-scaling-stroke}
-.comp .hit{fill:transparent;stroke:none}
-.comp text{fill:var(--comp);font-family:var(--font-mono);text-anchor:middle;
-  dominant-baseline:middle}
-.comp .lbl{font-family:var(--font-mono);fill:var(--comp)}
-.comp .val{font-family:var(--font-mono);fill:var(--comp)}
-.comp .pinname{font-family:var(--font-mono);fill:var(--comp)}
-.comp .pinnum{font-family:var(--font-mono);fill:var(--ink-3)}
-.nlabel{fill:var(--netlabel);font-family:var(--font-mono);dominant-baseline:middle}
-.junction{fill:var(--junction);stroke:none}
-.flag{fill:none;stroke:var(--comp);stroke-width:1.2;vector-effect:non-scaling-stroke;stroke-linejoin:round;stroke-linecap:round}
-.flag.fill{fill:var(--comp)}
-.flag.arrow{fill:var(--ink-2);stroke:var(--ink-2)}
-.flabel{fill:var(--netlabel);font-family:var(--font-mono)}
-.flagg.hot .flag{stroke:var(--wire-hi)}
-.flagg.hot .flag.fill{fill:var(--wire-hi)}
-.flagg.hot .flabel{fill:var(--wire-hi);font-weight:700}
-/* page frame + zone-reference grid border */
-.pborder{fill:none;stroke:var(--ink-3);stroke-width:1;vector-effect:non-scaling-stroke}
-.pborder.outer{stroke-dasharray:5 3}
-.ztick{stroke:var(--ink-3);stroke-width:1;vector-effect:non-scaling-stroke}
-.zlbl{fill:var(--ink-2);font-family:var(--font-ui);text-anchor:middle;dominant-baseline:central}
-/* title block */
-.tb-cell{fill:#fff;stroke:var(--ink-tb);stroke-width:1;vector-effect:non-scaling-stroke}
-.tb-lbl{fill:var(--ink-3);font-family:var(--font-ui);dominant-baseline:central}
-.tb-val{fill:var(--ink-tb);font-family:var(--font-ui);dominant-baseline:central}
-.tb-title{fill:var(--ink-tb);font-family:var(--font-ui);font-weight:600}
-.dim{opacity:.18}
-.wire.hot{stroke:var(--wire-hi);stroke-width:2.2}
-.wire.bus.hot{stroke-width:3.6}
-.pin.hot{fill:var(--wire-hi)}
-.nlabel.hot{fill:var(--wire-hi);font-weight:700}
-.comp.hot rect{stroke:var(--comp-hi);stroke-width:2}
-.comp.add rect{stroke:var(--d-add);fill:var(--d-add-soft);stroke-width:1.6}
-.comp.chg rect{stroke:var(--d-chg);fill:var(--d-chg-soft);stroke-width:1.6}
-.comp.ghost rect{stroke:var(--d-del);fill:var(--d-del-soft);stroke-dasharray:4 3}
-#tip{position:absolute;pointer-events:none;background:var(--ink);color:#fff;
-  font-family:var(--font-mono);font-size:11px;padding:4px 7px;border-radius:5px;
-  opacity:0;transition:opacity .1s;max-width:320px;z-index:5;white-space:pre-line}
-#info{position:absolute;left:10px;bottom:10px;font-family:var(--font-mono);
-  font-size:11px;color:var(--ink-3);background:var(--panel);border:1px solid var(--line);
-  border-radius:6px;padding:5px 8px;pointer-events:none}
-#diffbar{display:none;align-items:center;gap:10px;font-size:12px;font-family:var(--font-mono)}
-#diffbar .chip{padding:2px 7px;border-radius:10px}
-.chip.add{background:var(--d-add-soft);color:var(--d-add)}
-.chip.del{background:var(--d-del-soft);color:var(--d-del)}
-.chip.chg{background:var(--d-chg-soft);color:var(--d-chg)}
-.legend{position:absolute;right:10px;top:10px;font-family:var(--font-mono);font-size:11px;
-  background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:6px 8px;display:none}
-.legend div{display:flex;align-items:center;gap:6px}.legend i{width:10px;height:10px;border-radius:2px;display:inline-block}
+.sch-scene.dark{
+  --p-page:#1C1E24; --p-pageline:#31343D; --p-zone:#767B87; --p-line:#3A3E48;
+  --p-glyph:#565B66; --p-note:#9BA1AB; --p-wire:#53C7BE; --p-pin:#F0716C;
+  --p-comp:#E0A55C; --p-compfill:#22252C; --p-pinnum:#767B87; --p-net:#93A5FD;
+  --p-jct:#F0716C; --p-ink:#E8E6E1; --p-hot:#FF8A3D;
+}
+.sch-scene .page-bg{fill:var(--p-page);stroke:var(--p-pageline)}
+.sch-scene .pborder{fill:none;stroke:var(--p-zone);stroke-width:1;vector-effect:non-scaling-stroke}
+.sch-scene .pborder.outer{stroke-dasharray:5 3}
+.sch-scene .ztick{stroke:var(--p-zone);stroke-width:1;vector-effect:non-scaling-stroke}
+.sch-scene .zlbl{fill:var(--p-note);font-family:'IBM Plex Sans',sans-serif;text-anchor:middle;dominant-baseline:central}
+.sch-scene .glyph{stroke:var(--p-glyph);stroke-width:1;fill:none;vector-effect:non-scaling-stroke}
+.sch-scene .gbox{fill:none;stroke:var(--p-line);stroke-width:1;vector-effect:non-scaling-stroke}
+.sch-scene .note{fill:var(--p-note);font-family:'IBM Plex Sans',sans-serif}
+.sch-scene .wire{stroke:var(--p-wire);stroke-width:1;fill:none;vector-effect:non-scaling-stroke}
+.sch-scene .wire.bus{stroke-width:2.8}
+.sch-scene .pin{fill:var(--p-pin)}
+.sch-scene .comp rect{fill:var(--p-compfill);stroke:var(--p-comp);stroke-width:1;vector-effect:non-scaling-stroke}
+.sch-scene .comp .sym{fill:none;stroke:var(--p-comp);stroke-width:1.4;vector-effect:non-scaling-stroke;stroke-linejoin:round;stroke-linecap:round}
+.sch-scene .comp .sym.fill{fill:var(--p-comp)}
+.sch-scene .comp .lead{stroke:var(--p-comp);stroke-width:1;vector-effect:non-scaling-stroke}
+.sch-scene .comp .hit{fill:transparent;stroke:none}
+.sch-scene .comp text{fill:var(--p-comp);font-family:'IBM Plex Mono',monospace;text-anchor:middle;dominant-baseline:middle}
+.sch-scene .comp .lbl,.sch-scene .comp .val,.sch-scene .comp .pinname{font-family:'IBM Plex Mono',monospace;fill:var(--p-comp)}
+.sch-scene .comp .pinnum{font-family:'IBM Plex Mono',monospace;fill:var(--p-pinnum)}
+.sch-scene .nlabel{fill:var(--p-net);font-family:'IBM Plex Mono',monospace;dominant-baseline:middle}
+.sch-scene .junction{fill:var(--p-jct);stroke:none}
+.sch-scene .flag{fill:none;stroke:var(--p-comp);stroke-width:1.2;vector-effect:non-scaling-stroke;stroke-linejoin:round;stroke-linecap:round}
+.sch-scene .flag.fill{fill:var(--p-comp)}
+.sch-scene .flag.arrow{fill:var(--p-note);stroke:var(--p-note)}
+.sch-scene .flabel{fill:var(--p-net);font-family:'IBM Plex Mono',monospace}
+.sch-scene .flagg.hot .flag{stroke:var(--p-hot)}
+.sch-scene .flagg.hot .flag.fill{fill:var(--p-hot)}
+.sch-scene .flagg.hot .flabel{fill:var(--p-hot);font-weight:700}
+.sch-scene .tb-cell{fill:var(--p-page);stroke:var(--p-ink);stroke-width:1;vector-effect:non-scaling-stroke}
+.sch-scene .tb-lbl{fill:var(--p-pinnum);font-family:'IBM Plex Sans',sans-serif;dominant-baseline:central}
+.sch-scene .tb-val{fill:var(--p-ink);font-family:'IBM Plex Sans',sans-serif;dominant-baseline:central}
+.sch-scene .tb-title{fill:var(--p-ink);font-family:'IBM Plex Sans',sans-serif;font-weight:600}
+.sch-scene .dim{opacity:.15}
+.sch-scene .wire.hot{stroke:var(--p-hot);stroke-width:2.2}
+.sch-scene .wire.bus.hot{stroke-width:3.6}
+.sch-scene .pin.hot{fill:var(--p-hot)}
+.sch-scene .nlabel.hot{fill:var(--p-hot);font-weight:700}
+.sch-scene .comp.hot rect{stroke:var(--p-hot);stroke-width:2}
+.sch-scene .comp.sel rect{stroke:var(--p-hot);stroke-width:2}
+.sch-scene .comp.sel .sym{stroke:var(--p-hot)}
+.sch-scene .comp.sel .sym.fill{fill:var(--p-hot)}
+.sch-scene .comp.sel text{fill:var(--p-hot)}
+.sch-scene .comp.flash{animation:schFlash .5s ease 3}
+.sch-scene .comp.add rect{stroke:var(--p-add,#1A7F37);fill:var(--p-addsoft,rgba(26,127,55,.14));stroke-width:1.6}
+.sch-scene .comp.chg rect{stroke:var(--p-chg,#9A6700);fill:var(--p-chgsoft,rgba(154,103,0,.16));stroke-width:1.6}
+.sch-scene .comp.ghost rect{stroke:var(--p-del,#CF222E);fill:var(--p-delsoft,rgba(207,34,46,.13));stroke-dasharray:4 3}
+.sch-mini .mini-page{fill:var(--p-page);stroke:var(--p-pageline);stroke-width:1;vector-effect:non-scaling-stroke}
+.sch-mini .mini-wire{stroke:var(--p-wire);stroke-width:1;vector-effect:non-scaling-stroke;opacity:.5}
+.sch-mini .mini-part{fill:var(--p-comp);opacity:.35}
+.sch-mini .mini-vp{fill:rgba(234,88,12,0.10);stroke:#EA580C;stroke-width:1.4;vector-effect:non-scaling-stroke;cursor:grab}
 </style></head>
 <body>
-<header>
-  <span class="title" id="dsn-name">Schematic</span>
-  <span class="sub" id="dsn-sub"></span>
-  <div id="diffbar"></div>
-  <span class="spacer"></span>
-  <div class="search"><input id="q" placeholder="find part or net…" autocomplete="off"></div>
-  <button class="tool" id="fit">Fit</button>
-</header>
-<div id="main">
-  <div id="nav"><div class="nav-h">Sheets</div><div id="sheets"></div></div>
-  <div id="stage">
-    <svg id="svg"><g id="scene"></g></svg>
-    <div id="tip"></div>
-    <div id="info"></div>
-    <div class="legend" id="legend">
-      <div><i style="background:var(--d-add)"></i>added</div>
-      <div><i style="background:var(--d-del)"></i>removed</div>
-      <div><i style="background:var(--d-chg)"></i>changed</div>
+<div style="position:relative;height:100vh;display:flex;flex-direction:column;overflow:hidden">
+  <!-- toolbar -->
+  <div style="display:flex;align-items:center;gap:12px;height:54px;padding:0 14px;background:#FBFAF7;border-bottom:1px solid #E0DCD1;flex-shrink:0;z-index:40;position:relative">
+    <button id="tb-sheets-btn" class="tbtn" style="display:none">Sheets</button>
+    <div style="display:flex;flex-direction:column;gap:1px;min-width:0">
+      <div id="tb-name" style="font-size:14px;font-weight:700;letter-spacing:.01em;line-height:1.15;white-space:nowrap">Schematic</div>
+      <div id="tb-sub" style="font-size:10.5px;color:#8B8578;font-family:'IBM Plex Mono',monospace;line-height:1.2;white-space:nowrap">loading…</div>
+    </div>
+    <div style="width:1px;height:26px;background:#E0DCD1;flex-shrink:0"></div>
+    <div style="position:relative;flex-shrink:0">
+      <svg viewBox="0 0 16 16" style="position:absolute;left:9px;top:9px;width:14px;height:14px;pointer-events:none">
+        <circle cx="7" cy="7" r="4.5" fill="none" stroke="#A19B8E" stroke-width="1.5"></circle>
+        <line x1="10.5" y1="10.5" x2="14" y2="14" stroke="#A19B8E" stroke-width="1.5" stroke-linecap="round"></line>
+      </svg>
+      <input id="tb-search" class="srch" placeholder="Find part or net…" autocomplete="off" spellcheck="false">
+      <div id="tb-drop" style="display:none;position:absolute;top:37px;left:0;width:330px;background:#FFFFFF;border:1px solid #E0DCD1;border-radius:10px;box-shadow:0 14px 32px rgba(24,20,10,0.16);overflow:hidden;z-index:80"></div>
+    </div>
+    <div id="tb-crumb" style="font-size:10.5px;font-family:'IBM Plex Mono',monospace;color:#8B8578;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
+    <div id="tb-diff" style="display:none;align-items:center;gap:6px;font-family:'IBM Plex Mono',monospace;font-size:11px"></div>
+    <div style="flex:1"></div>
+    <button id="tb-theme" class="tbtn" title="Toggle canvas theme" style="min-width:52px">Dark</button>
+    <button id="tb-bom" class="tbtn">BOM</button>
+    <button id="tb-fit" class="tbtn">Fit</button>
+    <div style="display:flex;align-items:center;border:1px solid #D9D4C6;border-radius:8px;background:#FFFFFF;overflow:hidden;flex-shrink:0">
+      <button id="tb-zout" class="zbtn">&#8722;</button>
+      <span id="tb-zoom" style="font-family:'IBM Plex Mono',monospace;font-size:11px;min-width:44px;text-align:center;color:#3A362E">100%</span>
+      <button id="tb-zin" class="zbtn">+</button>
     </div>
   </div>
+  <!-- main -->
+  <div style="display:flex;flex:1;min-height:0;position:relative">
+    <div id="sidebar" style="width:252px;flex-shrink:0;border-right:1px solid #E0DCD1;background:#FBFAF7;overflow-y:auto;padding:2px 0 12px"></div>
+    <div id="stage" class="sch-stage" style="flex:1;position:relative;overflow:hidden;min-width:0">
+      <svg id="svg" class="sch-scene" style="width:100%;height:100%;display:block;cursor:grab;touch-action:none"><g id="scene"></g></svg>
+      <div id="status" style="position:absolute;left:12px;bottom:12px;z-index:10;max-width:60%"></div>
+      <div id="minimap" style="position:absolute;right:12px;bottom:12px;background:rgba(251,250,247,0.92);border:1px solid #E0DCD1;border-radius:10px;padding:5px;box-shadow:0 8px 20px rgba(24,20,10,0.10)">
+        <svg id="mini" class="sch-scene sch-mini" style="display:block;width:188px;height:126px;touch-action:none"></svg>
+      </div>
+    </div>
+    <div id="inspector" style="display:none;width:290px;flex-shrink:0;border-left:1px solid #E0DCD1;background:#FBFAF7;overflow-y:auto"></div>
+  </div>
+  <!-- bom modal -->
+  <div id="bom" style="display:none"></div>
+  <!-- tooltip -->
+  <div id="tip" style="position:fixed;left:0;top:0;pointer-events:none;background:#221F1A;color:#FBFAF7;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:4px 8px;border-radius:6px;opacity:0;transition:opacity .1s;max-width:320px;z-index:200;white-space:pre-line"></div>
 </div>
 <script>
-const MODEL = __MODEL__;
-const svg = document.getElementById('svg'), scene = document.getElementById('scene');
-const tip = document.getElementById('tip'), info = document.getElementById('info');
-let cur = 0, view = {x:0,y:0,k:1}, pinnedNet = null;
-
-document.getElementById('dsn-name').textContent = MODEL.name || 'Schematic';
-document.getElementById('dsn-sub').textContent = MODEL.sheets.length + ' sheets';
-
-// ── diff summary ──
-const diff = MODEL.diff;
-if (diff){
-  const bar = document.getElementById('diffbar'); bar.style.display='flex';
-  bar.innerHTML = `<span>vs ${diff.old}</span>`+
-    `<span class="chip add">+${diff.added.length}</span>`+
-    `<span class="chip del">−${diff.removed.length}</span>`+
-    `<span class="chip chg">~${Object.keys(diff.changed).length}</span>`;
-  document.getElementById('legend').style.display='block';
-}
-const addedSet = new Set(diff? diff.added : []);
-const chgSet = new Set(diff? Object.keys(diff.changed) : []);
-
-// ── sheet nav ──
-const sheetsEl = document.getElementById('sheets');
-MODEL.sheets.forEach((s,i)=>{
-  const el=document.createElement('div'); el.className='sheet'; el.dataset.i=i;
-  el.innerHTML=`<span>${s.view}${s.page&&s.page!==s.view?' · '+s.page:''}</span>`+
-    `<span class="cnt">${s.parts.length}p</span>`;
-  el.onclick=()=>selectSheet(i);
-  sheetsEl.appendChild(el);
-});
-
-// net key -> Set of sheet indices that contain it (named nets merge by name,
-// so this catches every page a net appears on)
-const netSheets = (()=>{
-  const m=new Map();
-  MODEL.sheets.forEach((s,i)=>{
-    const add=k=>{ if(!k)return; (m.get(k)||m.set(k,new Set()).get(k)).add(i); };
-    (s.wires||[]).forEach(w=>add(w[4]));
-    (s.parts||[]).forEach(p=>(p.pins||[]).forEach(pin=>add(pin[2])));
-    (s.connectors||[]).forEach(f=>add(f.key));
-    (s.labels||[]).forEach(l=>add(l.key));
-  });
-  return m;
-})();
-// mark, in the sheet index, every page that carries net k (null clears)
-function markNetSheets(k){
-  const set = k?netSheets.get(k):null;
-  document.querySelectorAll('#sheets .sheet').forEach(el=>
-    el.classList.toggle('has-net', !!(set&&set.has(+el.dataset.i))));
-}
-
-function esc(s){return (s+'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
-
-// Draw the OrCAD-style page border with a zone-reference grid (numbers along
-// top/bottom, letters along left/right, ticks between an outer and inner frame).
-function borderSVG(fr){
-  const[fx,fy,fX,fY]=fr, W=fX-fx, H=fY-fy, D=22;
-  const ix=fx+D, iy=fy+D, iX=fX-D, iY=fY-D;
-  const ncols=Math.max(4,Math.min(12,Math.round(W/210)));
-  const nrows=Math.max(3,Math.min(10,Math.round(H/210)));
-  let s=`<rect class="pborder outer" x="${fx}" y="${fy}" width="${W}" height="${H}"/>`+
-        `<rect class="pborder" x="${ix}" y="${iy}" width="${iX-ix}" height="${iY-iy}"/>`;
-  const fs=Math.min(D*0.7,14);
-  for(let i=0;i<ncols;i++){
-    const x0=ix+i*(iX-ix)/ncols, xc=x0+(iX-ix)/ncols/2;
-    if(i>0) s+=`<line class="ztick" x1="${x0}" y1="${fy}" x2="${x0}" y2="${iy}"/>`+
-               `<line class="ztick" x1="${x0}" y1="${iY}" x2="${x0}" y2="${fY}"/>`;
-    const n=(ncols-i); // OrCAD numbers increase right→left
-    s+=`<text class="zlbl" x="${xc}" y="${fy+D/2}" font-size="${fs}">${n}</text>`+
-       `<text class="zlbl" x="${xc}" y="${fY-D/2}" font-size="${fs}">${n}</text>`;
+/* ── SchRender: pure SVG builders (ported from render-core.js) ── */
+(function () {
+  const esc = s => (s + '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const isBus = n => /\[\d+\.\.\d+\]/.test(String(n));
+  function borderSVG(fr) {
+    const [fx, fy, fX, fY] = fr, W = fX - fx, H = fY - fy, D = 22;
+    const ix = fx + D, iy = fy + D, iX = fX - D, iY = fY - D;
+    const ncols = Math.max(4, Math.min(12, Math.round(W / 210)));
+    const nrows = Math.max(3, Math.min(10, Math.round(H / 210)));
+    let s = `<rect class="pborder outer" x="${fx}" y="${fy}" width="${W}" height="${H}"/>` +
+      `<rect class="pborder" x="${ix}" y="${iy}" width="${iX - ix}" height="${iY - iy}"/>`;
+    const fs = Math.min(D * 0.7, 14);
+    for (let i = 0; i < ncols; i++) {
+      const x0 = ix + i * (iX - ix) / ncols, xc = x0 + (iX - ix) / ncols / 2;
+      if (i > 0) s += `<line class="ztick" x1="${x0}" y1="${fy}" x2="${x0}" y2="${iy}"/>` +
+        `<line class="ztick" x1="${x0}" y1="${iY}" x2="${x0}" y2="${fY}"/>`;
+      const n = (ncols - i);
+      s += `<text class="zlbl" x="${xc}" y="${fy + D / 2}" font-size="${fs}">${n}</text>` +
+        `<text class="zlbl" x="${xc}" y="${fY - D / 2}" font-size="${fs}">${n}</text>`;
+    }
+    for (let j = 0; j < nrows; j++) {
+      const y0 = iy + j * (iY - iy) / nrows, yc = y0 + (iY - iy) / nrows / 2;
+      if (j > 0) s += `<line class="ztick" x1="${fx}" y1="${y0}" x2="${ix}" y2="${y0}"/>` +
+        `<line class="ztick" x1="${iX}" y1="${y0}" x2="${fX}" y2="${y0}"/>`;
+      const L = String.fromCharCode(65 + (nrows - 1 - j));
+      s += `<text class="zlbl" x="${fx + D / 2}" y="${yc}" font-size="${fs}">${L}</text>` +
+        `<text class="zlbl" x="${fX - D / 2}" y="${yc}" font-size="${fs}">${L}</text>`;
+    }
+    return s;
   }
-  for(let j=0;j<nrows;j++){
-    const y0=iy+j*(iY-iy)/nrows, yc=y0+(iY-iy)/nrows/2;
-    if(j>0) s+=`<line class="ztick" x1="${fx}" y1="${y0}" x2="${ix}" y2="${y0}"/>`+
-               `<line class="ztick" x1="${iX}" y1="${y0}" x2="${fX}" y2="${y0}"/>`;
-    const L=String.fromCharCode(65+(nrows-1-j)); // letters increase bottom→top
-    s+=`<text class="zlbl" x="${fx+D/2}" y="${yc}" font-size="${fs}">${L}</text>`+
-       `<text class="zlbl" x="${fX-D/2}" y="${yc}" font-size="${fs}">${L}</text>`;
+  function titleblockSVG(tb, geom) {
+    if (!tb || !geom) return '';
+    const ox = tb.ox, oy = tb.oy;
+    let s = '';
+    for (const r of geom.rects)
+      s += `<rect class="tb-cell" x="${ox + r[0]}" y="${oy + r[1]}" width="${r[2] - r[0]}" height="${r[3] - r[1]}"/>`;
+    for (const L of geom.lines)
+      s += `<line class="tb-cell" x1="${ox + L[0]}" y1="${oy + L[1]}" x2="${ox + L[2]}" y2="${oy + L[3]}"/>`;
+    for (const t of geom.labels)
+      s += `<text class="tb-lbl" x="${ox + t.x}" y="${oy + t.y}" font-size="9">${esc(t.s)}</text>`;
+    const title = ('' + tb.title);
+    const tfs = Math.max(8, Math.min(15, 185 / Math.max(title.length * 0.6, 1)));
+    s += `<text class="tb-title" x="${ox + 100}" y="${oy + 40}" font-size="${tfs.toFixed(1)}" text-anchor="middle">${esc(title)}</text>`;
+    s += `<text class="tb-val" x="${ox + 280}" y="${oy + 40}" font-size="11" text-anchor="middle">${esc(tb.company)}</text>`;
+    s += `<text class="tb-val" x="${ox + 40}" y="${oy + 108}" font-size="10">${esc(tb.size)}</text>`;
+    if (tb.rev) s += `<text class="tb-val" x="${ox + 190}" y="${oy + 108}" font-size="10">${esc(tb.rev)}</text>`;
+    if (tb.date) s += `<text class="tb-val" x="${ox + 40}" y="${oy + 130}" font-size="9">${esc(tb.date)}</text>`;
+    s += `<text class="tb-val" x="${ox + 248}" y="${oy + 131}" font-size="9" text-anchor="middle">${tb.n}</text>`;
+    s += `<text class="tb-val" x="${ox + 285}" y="${oy + 131}" font-size="9" text-anchor="middle">${tb.total}</text>`;
+    return s;
   }
-  return s;
-}
-
-// Draw the extracted title-block table at its bottom-right origin, with fields.
-function titleblockSVG(tb, geom){
-  if(!tb||!geom) return '';
-  const ox=tb.ox, oy=tb.oy;
-  let s='';
-  for(const r of geom.rects)
-    s+=`<rect class="tb-cell" x="${ox+r[0]}" y="${oy+r[1]}" width="${r[2]-r[0]}" height="${r[3]-r[1]}"/>`;
-  for(const L of geom.lines)
-    s+=`<line class="tb-cell" x1="${ox+L[0]}" y1="${oy+L[1]}" x2="${ox+L[2]}" y2="${oy+L[3]}"/>`;
-  for(const t of geom.labels)
-    s+=`<text class="tb-lbl" x="${ox+t.x}" y="${oy+t.y}" font-size="9">${esc(t.s)}</text>`;
-  // field values — short sheet name centered in the title area (0..200, 0..80)
-  const title=(''+tb.title);
-  const tfs=Math.max(8,Math.min(15,185/Math.max(title.length*0.6,1)));
-  s+=`<text class="tb-title" x="${ox+100}" y="${oy+40}" font-size="${tfs.toFixed(1)}" text-anchor="middle">${esc(title)}</text>`;
-  s+=`<text class="tb-val" x="${ox+280}" y="${oy+40}" font-size="11" text-anchor="middle">${esc(tb.company)}</text>`;
-  s+=`<text class="tb-val" x="${ox+40}" y="${oy+108}" font-size="10">${esc(tb.size)}</text>`;
-  if(tb.rev) s+=`<text class="tb-val" x="${ox+190}" y="${oy+108}" font-size="10">${esc(tb.rev)}</text>`;
-  if(tb.date) s+=`<text class="tb-val" x="${ox+40}" y="${oy+130}" font-size="9">${esc(tb.date)}</text>`;
-  s+=`<text class="tb-val" x="${ox+248}" y="${oy+131}" font-size="9" text-anchor="middle">${tb.n}</text>`;
-  s+=`<text class="tb-val" x="${ox+285}" y="${oy+131}" font-size="9" text-anchor="middle">${tb.total}</text>`;
-  return s;
-}
-
-// Draw a power/ground/off-page connector glyph at its wire-touch point (x,y),
-// pointing outward along the wire (orient u/d/l/r). The net name sits on the
-// wire side (inward), beside the wire, as OrCAD places a net label.
-function flagSVG(f, ctr){
-  const x=f.x, y=f.y;
-  const dir={u:[0,-1],d:[0,1],l:[-1,0],r:[1,0]}[f.orient||'d'];
-  const ux=dir[0],uy=dir[1],vx=-uy,vy=ux;
-  const P=(t,s)=>[x+ux*t+vx*s, y+uy*t+vy*s];
-  const M=p=>p[0].toFixed(1)+' '+p[1].toFixed(1);
-  const L=(a,b)=>`<line class="flag" x1="${a[0].toFixed(1)}" y1="${a[1].toFixed(1)}" x2="${b[0].toFixed(1)}" y2="${b[1].toFixed(1)}"/>`;
-  const nk=f.key?` data-net="${esc(f.key)}"`:'';
-  const vert=(f.orient==='u'||f.orient==='d');
-  // net label beside the wire end (used by gnd/power flags)
-  const sideLabel=()=>{
-    if(!f.net) return '';
-    const lp=P(-3,-3.5);                 // inward along wire, off to one side
-    const lx=lp[0].toFixed(1), ly=lp[1].toFixed(1);
-    const anc=vert?(f.orient==='d'?'start':'end'):(f.orient==='l'?'start':'end');
-    const rot=vert?` transform="rotate(-90 ${lx} ${ly})"`:'';
-    return `<text class="flabel" x="${lx}" y="${ly}" font-size="8" text-anchor="${anc}" dominant-baseline="central"${rot}>${esc(f.net)}</text>`;
-  };
-  let g=`<g class="flagg"${nk}>`;
-  if(f.kind==='gnd'){
-    g+=L(P(0,0),P(4,0))+L(P(4,-5),P(4,5))+L(P(7,-3),P(7,3))+L(P(10,-1.5),P(10,1.5));
-    g+=sideLabel();
-  } else if(f.kind==='pwr'){
-    // power rail: a short bar perpendicular to the wire at its end (no arrow)
-    g+=L(P(0,-5),P(0,5));
-    g+=sideLabel();
-  } else {
-    // off-page (in/out) port. Each net stub carries two of these, one at each
-    // end. The in/out indicator goes on the end facing the page centre (the
-    // "inside"); the outer end — pointing toward the sheet edge, where the big
-    // combined PCIE/DDR bus ring runs — shows just the net name and connects to
-    // that bus.
-    const name=f.net||'', fs=8;
-    const toCenter = ctr ? (ux*(ctr[0]-x)+uy*(ctr[1]-y))>0 : (f.orient==='d'||f.orient==='r');
-    const labelOnly=!toCenter;
-    if(labelOnly){
-      // net name running alongside the stub, offset to one side so the wire
-      // does not cut through the text (to the right of vertical stubs, above
-      // horizontal ones), and reading inward from the wire end so it stays
-      // within the net's span rather than sticking out past its end.
-      // grow the text INWARD (opposite the outward orient) so it never spills
-      // past the net end: u/r anchor at the far char, d/l at the first
-      const off=fs*0.7;
-      const lp=P(-2,off), lx=lp[0].toFixed(1), ly=lp[1].toFixed(1);
-      const anc=(f.orient==='u'||f.orient==='r')?'end':'start';
-      const rot=vert?` transform="rotate(-90 ${lx} ${ly})"`:'';
-      g+=`<text class="flabel" x="${lx}" y="${ly}" font-size="${fs}" text-anchor="${anc}" dominant-baseline="central"${rot}>${esc(name)}</text>`;
+  function flagSVG(f, ctr) {
+    const x = f.x, y = f.y;
+    const dir = { u: [0, -1], d: [0, 1], l: [-1, 0], r: [1, 0] }[f.orient || 'd'];
+    const ux = dir[0], uy = dir[1], vx = -uy, vy = ux;
+    const P = (t, s) => [x + ux * t + vx * s, y + uy * t + vy * s];
+    const M = p => p[0].toFixed(1) + ' ' + p[1].toFixed(1);
+    const L = (a, b) => `<line class="flag" x1="${a[0].toFixed(1)}" y1="${a[1].toFixed(1)}" x2="${b[0].toFixed(1)}" y2="${b[1].toFixed(1)}"/>`;
+    const nk = f.key ? ` data-net="${esc(f.key)}"` : '';
+    const vert = (f.orient === 'u' || f.orient === 'd');
+    const sideLabel = () => {
+      if (!f.net) return '';
+      const lp = P(-3, -3.5);
+      const lx = lp[0].toFixed(1), ly = lp[1].toFixed(1);
+      const anc = vert ? (f.orient === 'd' ? 'start' : 'end') : (f.orient === 'l' ? 'start' : 'end');
+      const rot = vert ? ` transform="rotate(-90 ${lx} ${ly})"` : '';
+      return `<text class="flabel" x="${lx}" y="${ly}" font-size="8" text-anchor="${anc}" dominant-baseline="central"${rot}>${esc(f.net)}</text>`;
+    };
+    let g = `<g class="flagg"${nk}>`;
+    if (f.kind === 'gnd') {
+      g += L(P(0, 0), P(4, 0)) + L(P(4, -5), P(4, 5)) + L(P(7, -3), P(7, 3)) + L(P(10, -1.5), P(10, 1.5));
+      g += sideLabel();
+    } else if (f.kind === 'pwr') {
+      g += L(P(0, -5), P(0, 5));
+      g += sideLabel();
     } else {
-      // flag-arrow banner sized to the name, with the net name inside. The
-      // chevron encodes the recovered signal direction: output points away from
-      // the wire, input points back toward it, bidirectional/unknown points
-      // both ways. The whole symbol sits outboard of the wire end (t>=0) so the
-      // wire terminates at its near corner rather than running into the body.
-      const w=fs*0.7, chev=w;
-      const bodyLen=Math.max(14, name.length*fs*0.6+5);
-      let pts, tc;
-      if(f.dir==='out'){
-        // flat against the wire, single point outward
-        pts=[P(0,-w),P(bodyLen,-w),P(bodyLen+chev,0),P(bodyLen,w),P(0,w)];
-        tc=bodyLen/2;
-      } else if(f.dir==='in'){
-        // near vertex on the wire end (arrow in), flat far end
-        pts=[P(0,0),P(chev,-w),P(bodyLen+chev,-w),P(bodyLen+chev,w),P(chev,w)];
-        tc=chev+bodyLen/2;
+      const name = f.net || '', fs = 8;
+      const toCenter = ctr ? (ux * (ctr[0] - x) + uy * (ctr[1] - y)) > 0 : (f.orient === 'd' || f.orient === 'r');
+      const labelOnly = !toCenter;
+      if (labelOnly) {
+        const off = fs * 0.7;
+        const lp = P(-2, off), lx = lp[0].toFixed(1), ly = lp[1].toFixed(1);
+        const anc = (f.orient === 'u' || f.orient === 'r') ? 'end' : 'start';
+        const rot = vert ? ` transform="rotate(-90 ${lx} ${ly})"` : '';
+        g += `<text class="flabel" x="${lx}" y="${ly}" font-size="${fs}" text-anchor="${anc}" dominant-baseline="central"${rot}>${esc(name)}</text>`;
       } else {
-        // bidirectional hexagon: near vertex sits on the wire end (the corner)
-        pts=[P(0,0),P(chev,-w),P(bodyLen+chev,-w),P(bodyLen+2*chev,0),P(bodyLen+chev,w),P(chev,w)];
-        tc=chev+bodyLen/2;
-      }
-      g+=`<polygon class="flag" points="${pts.map(M).join(' ')}"/>`;
-      const tp=P(tc,0), tx=tp[0].toFixed(1), ty=tp[1].toFixed(1);
-      const rot=vert?` transform="rotate(-90 ${tx} ${ty})"`:'';
-      g+=`<text class="flabel" x="${tx}" y="${ty}" font-size="${fs}" text-anchor="middle" dominant-baseline="central"${rot}>${esc(name)}</text>`;
-    }
-  }
-  return g+`</g>`;
-}
-
-// Draw a 2-terminal schematic symbol between pin points a and b.
-function symSVG(type,a,b){
-  const dx=b[0]-a[0], dy=b[1]-a[1], L=Math.hypot(dx,dy)||1;
-  const ux=dx/L, uy=dy/L, vx=-uy, vy=ux;
-  const cx=(a[0]+b[0])/2, cy=(a[1]+b[1])/2;
-  const bl=Math.min(L*0.32,11), w=5.5;
-  const P=(t,s)=>[cx+ux*t+vx*s, cy+uy*t+vy*s];
-  const M=(p)=>p[0].toFixed(1)+' '+p[1].toFixed(1);
-  const line=(p,q,c='sym')=>`<line class="${c}" x1="${p[0].toFixed(1)}" y1="${p[1].toFixed(1)}" x2="${q[0].toFixed(1)}" y2="${q[1].toFixed(1)}"/>`;
-  let svg='', gap=bl;
-  if(type==='res'){
-    // IEC rectangle body (matches OrCAD)
-    const e1=P(-bl,0), e2=P(bl,0), rw=4.5;
-    const c=[P(-bl,rw),P(bl,rw),P(bl,-rw),P(-bl,-rw)];
-    svg+=`<polygon class="sym" points="${c.map(M).join(' ')}"/>`;
-    svg+=line(a,e1,'lead')+line(b,e2,'lead');
-  } else if(type==='cap' || type==='cape'){
-    gap=3.2; const pw=7;
-    const e1=P(-gap,0), e2=P(gap,0);
-    svg+=line(P(-gap,-pw),P(-gap,pw));           // plate 1 (straight)
-    if(type==='cape'){                            // plate 2 curved (polarized)
-      const c1=P(gap,-pw), c2=P(gap,pw), cc=P(gap+3,0);
-      svg+=`<path class="sym" d="M ${M(c1)} Q ${M(cc)} ${M(c2)}"/>`;
-      const pp=P(-gap-4,-pw-2);                   // '+' marker
-      svg+=`<text class="sym fill" x="${pp[0].toFixed(1)}" y="${pp[1].toFixed(1)}" font-size="6" stroke="none" text-anchor="middle" dominant-baseline="central">+</text>`;
-    } else {
-      svg+=line(P(gap,-pw),P(gap,pw));            // plate 2 (straight)
-    }
-    svg+=line(a,e1,'lead')+line(b,e2,'lead');
-  } else if(type==='ind'){
-    const n=4, e1=P(-bl,0), e2=P(bl,0), step=(2*bl)/n, r=(step/2);
-    let d=`M ${M(e1)}`;
-    for(let i=0;i<n;i++){ const s0=-bl+i*step, s1=s0+step;
-      d+=` A ${r.toFixed(1)} ${r.toFixed(1)} 0 0 1 ${M(P(s1,0))}`; }
-    svg+=`<path class="sym" d="${d}"/>`;
-    svg+=line(a,e1,'lead')+line(b,e2,'lead');
-  } else if(type==='diode'){
-    const e1=P(-bl,0), e2=P(bl,0);
-    const t1=P(-bl,-w), t2=P(-bl,w), apex=P(bl*0.55,0);
-    svg+=`<polygon class="sym fill" points="${M(t1)} ${M(t2)} ${M(apex)}"/>`;
-    svg+=line(P(bl*0.55,-w),P(bl*0.55,w));        // cathode bar
-    svg+=line(a,e1,'lead')+line(b,e2,'lead');
-  }
-  // invisible hit target along the body
-  svg+=`<rect class="hit" x="${(cx-Math.abs(ux)*bl-Math.abs(vx)*w-2).toFixed(1)}" y="${(cy-Math.abs(uy)*bl-Math.abs(vy)*w-2).toFixed(1)}" width="${(2*(Math.abs(ux)*bl+Math.abs(vx)*w+2)).toFixed(1)}" height="${(2*(Math.abs(uy)*bl+Math.abs(vy)*w+2)).toFixed(1)}"/>`;
-  const off=w+7, lx=cx+vx*off, ly=cy+vy*off;
-  return {svg, lx, ly};
-}
-function netId(k){return 'n'+btoa(unescape(encodeURIComponent(k))).replace(/[^a-zA-Z0-9]/g,'');}
-
-function selectSheet(i){
-  cur=i;   // keep pinnedNet so a highlighted net carries across pages
-  document.querySelectorAll('.sheet').forEach(e=>e.classList.toggle('active',+e.dataset.i===i));
-  render();
-  fit();
-}
-
-function render(){
-  const s = MODEL.sheets[cur];
-  let h='';
-  // page layout layer (behind everything): zone border, boxes, notes
-  const g = s.graphics||{lines:[],rects:[],texts:[],polys:[]};
-  if(s.frame) h+=borderSVG(s.frame);
-  for(const L of g.lines){ // skip the raw border edge lines (replaced by zone border)
-    if(s.frame && (Math.abs(L[0]-L[2])<2 && (Math.abs(L[0]-s.frame[0])<3||Math.abs(L[0]-s.frame[2])<3)) ) continue;
-    if(s.frame && (Math.abs(L[1]-L[3])<2 && (Math.abs(L[1]-s.frame[1])<3||Math.abs(L[1]-s.frame[3])<3)) ) continue;
-    h+=`<line class="glyph" x1="${L[0]}" y1="${L[1]}" x2="${L[2]}" y2="${L[3]}"/>`;
-  }
-  for(const r of g.rects) h+=`<rect class="gbox" x="${Math.min(r[0],r[2])}" y="${Math.min(r[1],r[3])}" width="${Math.abs(r[2]-r[0])}" height="${Math.abs(r[3]-r[1])}"/>`;
-  for(const pl of g.polys){ if(pl.length<2)continue;
-    h+=`<polyline class="glyph" points="${pl.map(p=>p[0]+' '+p[1]).join(' ')}"/>`; }
-  for(const t of g.texts){
-    const fs=Math.max(8,Math.min(t.h*0.85,40));
-    const lines=(''+t.s).split(/\r\n|\n|\r/);
-    let ts=`<text class="note" x="${t.x}" y="${t.y+fs*0.8}" font-size="${fs.toFixed(1)}">`;
-    lines.forEach((ln,i)=>{ ts+=`<tspan x="${t.x}" dy="${i===0?0:fs*1.15}">${esc(ln)}</tspan>`; });
-    h+=ts+`</text>`;
-  }
-  // wires — fused/bus nets (name carries a [lo..hi] range) drawn thicker
-  const isBus=n=>/\[\d+\.\.\d+\]/.test(String(n));
-  for(const w of s.wires){
-    const cls=isBus(w[4])?'wire bus':'wire';
-    h+=`<line class="${cls}" data-net="${esc(w[4])}" x1="${w[0]}" y1="${w[1]}" x2="${w[2]}" y2="${w[3]}"/>`;
-  }
-  // parts
-  for(const p of s.parts){
-    if(!p.box) continue;
-    let cls='comp';
-    if(diff){ if(addedSet.has(p.des)) cls+=' add'; else if(chgSet.has(p.des)) cls+=' chg'; }
-    h+=`<g class="${cls}" data-des="${esc(p.des)}" data-pkg="${esc(p.pkg)}">`;
-    if(p.sym!=='box' && p.pins.length===2){
-      const a=p.pins[0], b=p.pins[1];
-      const g=symSVG(p.sym,[a[0],a[1]],[b[0],b[1]]);
-      h+=g.svg + `<text class="lbl" x="${g.lx}" y="${g.ly}" font-size="10" text-anchor="middle" dominant-baseline="central">${esc(p.des)}</text>`;
-    } else {
-      const[bx,by,bw,bh]=p.box, cx=bx+bw/2, cy=by+bh/2;
-      const named=p.pins.some(pin=>pin[4]);
-      const fs=Math.max(8,Math.min(13,Math.min(bw,bh)*0.35));
-      h+=`<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="2"/>`;
-      // designator: centered if no pin names, else near top so names have room
-      h+=`<text x="${cx}" y="${named?by+9:cy}" font-size="${fs}">${esc(p.des)}</text>`;
-      // pin names inside the box, adjacent to each pin
-      for(const pin of p.pins){
-        if(!pin[4]) continue;
-        const px=pin[0], py=pin[1];
-        const dL=Math.abs(px-bx),dR=Math.abs(px-(bx+bw)),dT=Math.abs(py-by),dB=Math.abs(py-(by+bh));
-        const mn=Math.min(dL,dR,dT,dB);
-        let tx=px,ty=py,anchor='middle';
-        if(mn===dL){tx=px+3;anchor='start';}
-        else if(mn===dR){tx=px-3;anchor='end';}
-        else if(mn===dT){ty=py+7;}
-        else {ty=py-3;}
-        h+=`<text class="pinname" x="${tx}" y="${ty}" font-size="7" text-anchor="${anchor}" dominant-baseline="central">${esc(pin[4])}</text>`;
+        const w = fs * 0.7, chev = w;
+        const bodyLen = Math.max(14, name.length * fs * 0.6 + 5);
+        let pts, tc;
+        if (f.dir === 'out') {
+          pts = [P(0, -w), P(bodyLen, -w), P(bodyLen + chev, 0), P(bodyLen, w), P(0, w)];
+          tc = bodyLen / 2;
+        } else if (f.dir === 'in') {
+          pts = [P(0, 0), P(chev, -w), P(bodyLen + chev, -w), P(bodyLen + chev, w), P(chev, w)];
+          tc = chev + bodyLen / 2;
+        } else {
+          pts = [P(0, 0), P(chev, -w), P(bodyLen + chev, -w), P(bodyLen + 2 * chev, 0), P(bodyLen + chev, w), P(chev, w)];
+          tc = chev + bodyLen / 2;
+        }
+        g += `<polygon class="flag" points="${pts.map(M).join(' ')}"/>`;
+        const tp = P(tc, 0), tx = tp[0].toFixed(1), ty = tp[1].toFixed(1);
+        const rot = vert ? ` transform="rotate(-90 ${tx} ${ty})"` : '';
+        g += `<text class="flabel" x="${tx}" y="${ty}" font-size="${fs}" text-anchor="middle" dominant-baseline="central"${rot}>${esc(name)}</text>`;
       }
     }
-    h+=`</g>`;
-    // small connection dots at passive pins only; box (IC) pins would sit on
-    // top of the pin-name text, so skip them there
-    if(p.sym!=='box'){
-      for(const pin of p.pins)
-        h+=`<circle class="pin" data-net="${esc(pin[2])}" cx="${pin[0]}" cy="${pin[1]}" r="1"/>`;
+    return g + `</g>`;
+  }
+  function symSVG(type, a, b) {
+    const dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy) || 1;
+    const ux = dx / L, uy = dy / L, vx = -uy, vy = ux;
+    const cx = (a[0] + b[0]) / 2, cy = (a[1] + b[1]) / 2;
+    const bl = Math.min(L * 0.32, 11), w = 5.5;
+    const P = (t, s) => [cx + ux * t + vx * s, cy + uy * t + vy * s];
+    const M = (p) => p[0].toFixed(1) + ' ' + p[1].toFixed(1);
+    const line = (p, q, c = 'sym') => `<line class="${c}" x1="${p[0].toFixed(1)}" y1="${p[1].toFixed(1)}" x2="${q[0].toFixed(1)}" y2="${q[1].toFixed(1)}"/>`;
+    let svg = '', gap = bl;
+    if (type === 'res') {
+      const e1 = P(-bl, 0), e2 = P(bl, 0), rw = 4.5;
+      const c = [P(-bl, rw), P(bl, rw), P(bl, -rw), P(-bl, -rw)];
+      svg += `<polygon class="sym" points="${c.map(M).join(' ')}"/>`;
+      svg += line(a, e1, 'lead') + line(b, e2, 'lead');
+    } else if (type === 'cap' || type === 'cape') {
+      gap = 3.2; const pw = 7;
+      const e1 = P(-gap, 0), e2 = P(gap, 0);
+      svg += line(P(-gap, -pw), P(-gap, pw));
+      if (type === 'cape') {
+        const c1 = P(gap, -pw), c2 = P(gap, pw), cc = P(gap + 3, 0);
+        svg += `<path class="sym" d="M ${M(c1)} Q ${M(cc)} ${M(c2)}"/>`;
+        const pp = P(-gap - 4, -pw - 2);
+        svg += `<text class="sym fill" x="${pp[0].toFixed(1)}" y="${pp[1].toFixed(1)}" font-size="6" stroke="none" text-anchor="middle" dominant-baseline="central">+</text>`;
+      } else {
+        svg += line(P(gap, -pw), P(gap, pw));
+      }
+      svg += line(a, e1, 'lead') + line(b, e2, 'lead');
+    } else if (type === 'ind') {
+      const n = 4, e1 = P(-bl, 0), e2 = P(bl, 0), step = (2 * bl) / n, r = (step / 2);
+      let d = `M ${M(e1)}`;
+      for (let i = 0; i < n; i++) { const s0 = -bl + i * step, s1 = s0 + step; d += ` A ${r.toFixed(1)} ${r.toFixed(1)} 0 0 1 ${M(P(s1, 0))}`; }
+      svg += `<path class="sym" d="${d}"/>`;
+      svg += line(a, e1, 'lead') + line(b, e2, 'lead');
+    } else if (type === 'diode') {
+      const e1 = P(-bl, 0), e2 = P(bl, 0);
+      const t1 = P(-bl, -w), t2 = P(-bl, w), apex = P(bl * 0.55, 0);
+      svg += `<polygon class="sym fill" points="${M(t1)} ${M(t2)} ${M(apex)}"/>`;
+      svg += line(P(bl * 0.55, -w), P(bl * 0.55, w));
+      svg += line(a, e1, 'lead') + line(b, e2, 'lead');
     }
+    svg += `<rect class="hit" x="${(cx - Math.abs(ux) * bl - Math.abs(vx) * w - 2).toFixed(1)}" y="${(cy - Math.abs(uy) * bl - Math.abs(vy) * w - 2).toFixed(1)}" width="${(2 * (Math.abs(ux) * bl + Math.abs(vx) * w + 2)).toFixed(1)}" height="${(2 * (Math.abs(uy) * bl + Math.abs(vy) * w + 2)).toFixed(1)}"/>`;
+    const off = w + 7, lx = cx + vx * off, ly = cy + vy * off;
+    return { svg, lx, ly };
   }
-  // removed parts (ghost) — placed at their old page position if same sheet name
-  if(diff){
-    const ghosts = (MODEL.removedGeom&&MODEL.removedGeom[s.id])||[];
-    for(const g of ghosts){
-      const[bx,by,bw,bh]=g.box, cx=bx+bw/2, cy=by+bh/2;
-      h+=`<g class="comp ghost" data-des="${esc(g.des)}"><rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="2"/>`+
-         `<text x="${cx}" y="${cy}" font-size="11">${esc(g.des)}</text></g>`;
+  function sceneSVG(s, model, dctx) {
+    dctx = dctx || {};
+    const diff = dctx.diff, addedSet = dctx.addedSet || new Set(), chgSet = dctx.chgSet || new Set();
+    let h = '';
+    if (s.frame) {
+      const [fx, fy, fX, fY] = s.frame;
+      h += `<rect class="page-bg" x="${fx - 16}" y="${fy - 16}" width="${fX - fx + 32}" height="${fY - fy + 32}" rx="3"/>`;
     }
+    const g = s.graphics || { lines: [], rects: [], texts: [], polys: [] };
+    if (s.frame) h += borderSVG(s.frame);
+    for (const L of g.lines) {
+      if (s.frame && (Math.abs(L[0] - L[2]) < 2 && (Math.abs(L[0] - s.frame[0]) < 3 || Math.abs(L[0] - s.frame[2]) < 3))) continue;
+      if (s.frame && (Math.abs(L[1] - L[3]) < 2 && (Math.abs(L[1] - s.frame[1]) < 3 || Math.abs(L[1] - s.frame[3]) < 3))) continue;
+      h += `<line class="glyph" x1="${L[0]}" y1="${L[1]}" x2="${L[2]}" y2="${L[3]}"/>`;
+    }
+    for (const r of g.rects) h += `<rect class="gbox" x="${Math.min(r[0], r[2])}" y="${Math.min(r[1], r[3])}" width="${Math.abs(r[2] - r[0])}" height="${Math.abs(r[3] - r[1])}"/>`;
+    for (const pl of g.polys) {
+      if (pl.length < 2) continue;
+      h += `<polyline class="glyph" points="${pl.map(p => p[0] + ' ' + p[1]).join(' ')}"/>`;
+    }
+    for (const t of g.texts) {
+      const fs = Math.max(8, Math.min(t.h * 0.85, 40));
+      const lines = ('' + t.s).split(/\r\n|\n|\r/);
+      let ts = `<text class="note" x="${t.x}" y="${t.y + fs * 0.8}" font-size="${fs.toFixed(1)}">`;
+      lines.forEach((ln, i) => { ts += `<tspan x="${t.x}" dy="${i === 0 ? 0 : fs * 1.15}">${esc(ln)}</tspan>`; });
+      h += ts + `</text>`;
+    }
+    for (const w of s.wires) {
+      const cls = isBus(w[4]) ? 'wire bus' : 'wire';
+      h += `<line class="${cls}" data-net="${esc(w[4])}" x1="${w[0]}" y1="${w[1]}" x2="${w[2]}" y2="${w[3]}"/>`;
+    }
+    for (const p of s.parts) {
+      if (!p.box) continue;
+      let cls = 'comp';
+      if (diff) { if (addedSet.has(p.des)) cls += ' add'; else if (chgSet.has(p.des)) cls += ' chg'; }
+      h += `<g class="${cls}" data-des="${esc(p.des)}" data-pkg="${esc(p.pkg)}">`;
+      if (p.sym !== 'box' && p.pins.length === 2) {
+        const a = p.pins[0], b = p.pins[1];
+        const gg = symSVG(p.sym, [a[0], a[1]], [b[0], b[1]]);
+        h += gg.svg + `<text class="lbl" x="${gg.lx}" y="${gg.ly}" font-size="10" text-anchor="middle" dominant-baseline="central">${esc(p.des)}</text>`;
+      } else {
+        const [bx, by, bw, bh] = p.box, cx = bx + bw / 2, cy = by + bh / 2;
+        const named = p.pins.some(pin => pin[4]);
+        const fs = Math.max(8, Math.min(13, Math.min(bw, bh) * 0.35));
+        h += `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="2"/>`;
+        h += `<text x="${cx}" y="${named ? by + 9 : cy}" font-size="${fs}">${esc(p.des)}</text>`;
+        for (const pin of p.pins) {
+          if (!pin[4]) continue;
+          const px = pin[0], py = pin[1];
+          const dL = Math.abs(px - bx), dR = Math.abs(px - (bx + bw)), dT = Math.abs(py - by), dB = Math.abs(py - (by + bh));
+          const mn = Math.min(dL, dR, dT, dB);
+          let tx = px, ty = py, anchor = 'middle';
+          if (mn === dL) { tx = px + 3; anchor = 'start'; }
+          else if (mn === dR) { tx = px - 3; anchor = 'end'; }
+          else if (mn === dT) { ty = py + 7; }
+          else { ty = py - 3; }
+          h += `<text class="pinname" x="${tx}" y="${ty}" font-size="7" text-anchor="${anchor}" dominant-baseline="central">${esc(pin[4])}</text>`;
+        }
+      }
+      h += `</g>`;
+      if (p.sym !== 'box') {
+        for (const pin of p.pins)
+          h += `<circle class="pin" data-net="${esc(pin[2])}" cx="${pin[0]}" cy="${pin[1]}" r="1"/>`;
+      }
+    }
+    if (diff) {
+      const ghosts = (dctx.removedGeom && dctx.removedGeom[s.id]) || [];
+      for (const gh of ghosts) {
+        const [bx, by, bw, bh] = gh.box, cx = bx + bw / 2, cy = by + bh / 2;
+        h += `<g class="comp ghost" data-des="${esc(gh.des)}"><rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="2"/>` +
+          `<text x="${cx}" y="${cy}" font-size="11">${esc(gh.des)}</text></g>`;
+      }
+    }
+    const fc = s.frame ? [(s.frame[0] + s.frame[2]) / 2, (s.frame[1] + s.frame[3]) / 2] : null;
+    for (const f of s.connectors || []) h += flagSVG(f, fc);
+    for (const j of s.junctions || []) h += `<circle class="junction" cx="${j[0]}" cy="${j[1]}" r="1.6"/>`;
+    for (const l of s.labels) {
+      h += `<text class="nlabel" data-net="${esc(l.key)}" x="${l.x}" y="${l.y - 3}" font-size="9">${esc(l.text)}</text>`;
+    }
+    h += titleblockSVG(s.tb, model.titleblock);
+    return h;
   }
-  // power/ground/off-page connector glyphs
-  const fc = s.frame ? [(s.frame[0]+s.frame[2])/2, (s.frame[1]+s.frame[3])/2] : null;
-  for(const f of s.connectors||[]) h+=flagSVG(f, fc);
-  // junction dots (electrical ties)
-  for(const j of s.junctions||[]) h+=`<circle class="junction" cx="${j[0]}" cy="${j[1]}" r="1.6"/>`;
-  // net labels
-  for(const l of s.labels){
-    h+=`<text class="nlabel" data-net="${esc(l.key)}" x="${l.x}" y="${l.y-3}" font-size="9">${esc(l.text)}</text>`;
+  function fitBox(s) {
+    if (s.frame) return s.frame;
+    const xs = [], ys = [];
+    for (const w of s.wires) { xs.push(w[0], w[2]); ys.push(w[1], w[3]); }
+    for (const p of s.parts) { if (p.box) { xs.push(p.box[0], p.box[0] + p.box[2]); ys.push(p.box[1], p.box[1] + p.box[3]); } }
+    if (!xs.length) return s.bbox;
+    const pct = (a, q) => { a = a.slice().sort((u, v) => u - v); return a[Math.floor((a.length - 1) * q)]; };
+    return [pct(xs, 0.01), pct(ys, 0.01), pct(xs, 0.99), pct(ys, 0.99)];
   }
-  // title block (bottom-right)
-  h+=titleblockSVG(s.tb, MODEL.titleblock);
-  scene.innerHTML=h;
-  info.textContent=`${s.parts.length} parts · ${s.wires.length} wires · ${Object.keys(s.nets).length} nets`;
-  attachHover();
+  function miniInner(s) {
+    const b = fitBox(s);
+    let h = `<rect class="mini-page" x="${b[0]}" y="${b[1]}" width="${b[2] - b[0]}" height="${b[3] - b[1]}"/>`;
+    for (const w of s.wires) h += `<line class="mini-wire" x1="${w[0]}" y1="${w[1]}" x2="${w[2]}" y2="${w[3]}"/>`;
+    for (const p of s.parts) { if (p.box) h += `<rect class="mini-part" x="${p.box[0]}" y="${p.box[1]}" width="${p.box[2]}" height="${p.box[3]}"/>`; }
+    return { box: b, html: h };
+  }
+  function thumbDataURI(s) {
+    const b = fitBox(s), pad = 30;
+    const vb = `${b[0] - pad} ${b[1] - pad} ${b[2] - b[0] + 2 * pad} ${b[3] - b[1] + 2 * pad}`;
+    let h = `<rect x="${b[0]}" y="${b[1]}" width="${b[2] - b[0]}" height="${b[3] - b[1]}" fill="#FFFFFF" stroke="#DFD9CC" stroke-width="6"/>`;
+    for (const w of s.wires) h += `<line x1="${w[0]}" y1="${w[1]}" x2="${w[2]}" y2="${w[3]}" stroke="#9AA6B8" stroke-width="7" opacity="0.9"/>`;
+    for (const p of s.parts) { if (p.box) h += `<rect x="${p.box[0]}" y="${p.box[1]}" width="${p.box[2]}" height="${p.box[3]}" fill="#E4D4B8"/>`; }
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}">${h}</svg>`;
+    return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+  }
+  window.SchRender = { esc, isBus, borderSVG, titleblockSVG, flagSVG, symSVG, sceneSVG, fitBox, miniInner, thumbDataURI };
+})();
+
+/* ── App ── */
+const M = __MODEL__;
+const R = window.SchRender, esc = R.esc;
+const $ = id => document.getElementById(id);
+
+let cur = 0, pinned = null, selDes = null, q = '', searchFocus = false;
+let bomOpen = false, bomQ = '', dark = false, collapsed = {}, sheetsOpen = true, ready = false;
+let view = { x: 0, y: 0, k: 1 };
+let netSheets, netNames, bomAll, partCount, thumbs, dctx;
+let svgEl, sceneEl, miniEl, vpEl, tipEl, infoEl, drag = null, miniDrag = false, suppressClick = false;
+
+function netName(k) { return netNames.get(k) || k; }
+function sheetLabel(i) { const s = M.sheets[i]; return s.page || s.view; }
+
+function init() {
+  const diff = M.diff || null;
+  dctx = diff ? { diff, addedSet: new Set(diff.added), chgSet: new Set(Object.keys(diff.changed)), removedGeom: M.removedGeom } : {};
+  netSheets = new Map(); netNames = new Map();
+  M.sheets.forEach((s, i) => {
+    const add = k => { if (!k) return; if (!netSheets.has(k)) netSheets.set(k, new Set()); netSheets.get(k).add(i); };
+    (s.wires || []).forEach(w => add(w[4]));
+    (s.parts || []).forEach(p => (p.pins || []).forEach(pin => add(pin[2])));
+    (s.connectors || []).forEach(f => add(f.key));
+    (s.labels || []).forEach(l => add(l.key));
+    Object.entries(s.nets || {}).forEach(([k, v]) => { if (v && !netNames.has(k)) netNames.set(k, v); });
+  });
+  const bomMap = new Map();
+  M.sheets.forEach((s, i) => s.parts.forEach(p => {
+    const key = p.pkg || '(no package)';
+    if (!bomMap.has(key)) bomMap.set(key, []);
+    bomMap.get(key).push({ des: p.des, si: i });
+  }));
+  bomAll = [...bomMap.entries()].map(([pkg, refs]) => ({ pkg, refs }))
+    .sort((a, b) => b.refs.length - a.refs.length || a.pkg.localeCompare(b.pkg));
+  partCount = M.sheets.reduce((n, s) => n + s.parts.length, 0);
+  thumbs = M.sheets.map(s => R.thumbDataURI(s));
+
+  svgEl = $('svg'); sceneEl = $('scene'); miniEl = $('mini'); tipEl = $('tip');
+  bindCanvas(); bindMini(); bindToolbar();
+  ready = true;
+  updChrome(); renderSidebar(); renderScene(); fit();
+}
+
+/* ---------- scene ---------- */
+function renderScene() {
+  const s = M.sheets[cur];
+  sceneEl.innerHTML = R.sceneSVG(s, M, dctx);
   applyView();
-  if(pinnedNet) hiNet(pinnedNet);   // re-apply a carried-over net highlight
+  renderStatus();
+  if (pinned) hiNet(pinned);
+  updateSelMark();
+  renderMini();
+}
+function applyView() {
+  sceneEl.setAttribute('transform', `translate(${view.x},${view.y}) scale(${view.k})`);
+  $('tb-zoom').textContent = Math.round(view.k * 100) + '%';
+  updateVp();
+}
+function fit() {
+  if (!svgEl || !ready) return;
+  const s = M.sheets[cur], b = R.fitBox(s), r = svgEl.getBoundingClientRect();
+  if (!r.width || !r.height) return;
+  const w = Math.max(b[2] - b[0], 10), h = Math.max(b[3] - b[1], 10);
+  const pad = 46, k = Math.min((r.width - 2 * pad) / w, (r.height - 2 * pad) / h);
+  view.k = Math.min(k, 8);
+  view.x = (r.width - (b[0] + b[2]) * view.k) / 2;
+  view.y = (r.height - (b[1] + b[3]) * view.k) / 2;
+  applyView();
+}
+function zoomBy(f) {
+  const r = svgEl.getBoundingClientRect(), mx = r.width / 2, my = r.height / 2;
+  const nk = Math.min(20, Math.max(0.05, view.k * f));
+  view.x = mx - (mx - view.x) * (nk / view.k);
+  view.y = my - (my - view.y) * (nk / view.k);
+  view.k = nk; applyView();
 }
 
-// ── hover / highlight ──
-function attachHover(){
-  scene.querySelectorAll('[data-net]').forEach(el=>{
-    el.addEventListener('mouseenter',()=>{ if(!pinnedNet) hiNet(el.dataset.net); });
-    el.addEventListener('mouseleave',()=>{ if(!pinnedNet) clearHi(); });
-    el.addEventListener('click',e=>{ e.stopPropagation();
-      pinnedNet = pinnedNet===el.dataset.net?null:el.dataset.net;
-      pinnedNet?hiNet(pinnedNet):clearHi(); });
+/* ---------- canvas events ---------- */
+function bindCanvas() {
+  const el = svgEl;
+  el.addEventListener('pointerdown', e => {
+    if (e.target.closest('[data-net],[data-des]')) return;
+    drag = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y, moved: false };
+    el.style.cursor = 'grabbing'; el.setPointerCapture(e.pointerId);
   });
-  scene.querySelectorAll('.comp[data-des]').forEach(el=>{
-    el.addEventListener('mousemove',e=>showTip(e, el.dataset.des+(el.dataset.pkg?'\n'+el.dataset.pkg:'')+diffReason(el.dataset.des)));
-    el.addEventListener('mouseleave',hideTip);
+  el.addEventListener('pointermove', e => {
+    if (drag) {
+      const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+      view.x = drag.vx + dx; view.y = drag.vy + dy; applyView(); return;
+    }
+    const c = e.target.closest('.comp[data-des]');
+    if (c) showTip(e, c.dataset.des + (c.dataset.pkg ? '\n' + c.dataset.pkg : '') + diffReason(c.dataset.des));
+    else hideTip();
   });
+  el.addEventListener('pointerup', () => {
+    if (drag && drag.moved) suppressClick = true;
+    drag = null; el.style.cursor = 'grab';
+  });
+  el.addEventListener('pointerleave', hideTip);
+  el.addEventListener('pointerover', e => {
+    const n = e.target.closest('[data-net]'); if (n && !pinned) hiNet(n.dataset.net);
+  });
+  el.addEventListener('pointerout', e => {
+    const n = e.target.closest('[data-net]'); if (n && !pinned) clearHi();
+  });
+  el.addEventListener('click', e => {
+    if (suppressClick) { suppressClick = false; return; }
+    const n = e.target.closest('[data-net]');
+    if (n) { setPinned(pinned === n.dataset.net ? null : n.dataset.net); return; }
+    const c = e.target.closest('.comp[data-des]');
+    if (c) { selectPart(c.dataset.des); return; }
+    if (pinned) setPinned(null);
+    if (selDes) closeSel();
+  });
+  el.addEventListener('wheel', e => {
+    e.preventDefault();
+    const r = el.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+    const f = Math.exp(-e.deltaY * 0.0015), nk = Math.min(20, Math.max(0.05, view.k * f));
+    view.x = mx - (mx - view.x) * (nk / view.k);
+    view.y = my - (my - view.y) * (nk / view.k);
+    view.k = nk; applyView();
+  }, { passive: false });
 }
-function diffReason(des){
-  if(!diff) return '';
-  if(addedSet.has(des)) return '\n＋ added';
-  if(chgSet.has(des)) return '\n~ '+diff.changed[des].join('\n~ ');
-  return '';
+
+/* ---------- minimap ---------- */
+function renderMini() {
+  const s = M.sheets[cur], m = R.miniInner(s), pad = 20;
+  miniEl.setAttribute('viewBox', `${m.box[0] - pad} ${m.box[1] - pad} ${m.box[2] - m.box[0] + 2 * pad} ${m.box[3] - m.box[1] + 2 * pad}`);
+  miniEl.innerHTML = m.html + '<rect class="mini-vp" x="0" y="0" width="0" height="0"/>';
+  vpEl = miniEl.querySelector('.mini-vp');
+  updateVp();
 }
-function hiNet(k){
-  const els=[...scene.querySelectorAll('[data-net]')];
-  const here = els.some(el=>el.dataset.net===k && k!=='');
-  scene.classList.toggle('dimmed', here);
-  els.forEach(el=>{
-    const on = el.dataset.net===k && k!=='';
-    el.classList.toggle('hot',on);
+function updateVp() {
+  if (!vpEl || !svgEl) return;
+  const r = svgEl.getBoundingClientRect();
+  vpEl.setAttribute('x', (0 - view.x) / view.k);
+  vpEl.setAttribute('y', (0 - view.y) / view.k);
+  vpEl.setAttribute('width', r.width / view.k);
+  vpEl.setAttribute('height', r.height / view.k);
+}
+function bindMini() {
+  const el = miniEl;
+  const center = (e) => {
+    const pt = el.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY;
+    const ctm = el.getScreenCTM(); if (!ctm) return;
+    const p = pt.matrixTransform(ctm.inverse());
+    const r = svgEl.getBoundingClientRect();
+    view.x = r.width / 2 - p.x * view.k; view.y = r.height / 2 - p.y * view.k; applyView();
+  };
+  el.addEventListener('pointerdown', e => { el.setPointerCapture(e.pointerId); miniDrag = true; center(e); });
+  el.addEventListener('pointermove', e => { if (miniDrag) center(e); });
+  el.addEventListener('pointerup', () => { miniDrag = false; });
+}
+
+/* ---------- highlight / info ---------- */
+function hiNet(k) {
+  const els = [...sceneEl.querySelectorAll('[data-net]')];
+  const here = els.some(el => el.dataset.net === k && k !== '');
+  els.forEach(el => {
+    const on = el.dataset.net === k && k !== '';
+    el.classList.toggle('hot', on);
     el.classList.toggle('dim', here && !on);
   });
-  markNetSheets(k);
-  // index of the other pages carrying this net
-  const pages=[...(netSheets.get(k)||[])].filter(i=>i!==cur)
-    .map(i=>MODEL.sheets[i].page||MODEL.sheets[i].view);
-  const also = pages.length?' · also on '+pages.join(', '):'';
-  const s=MODEL.sheets[cur];
-  if(here) info.textContent = (s.nets[k]||k) + ' — ' +
-    scene.querySelectorAll('.pin.hot').length + ' pins, ' +
-    scene.querySelectorAll('.wire.hot').length + ' segments' + also;
-  else info.textContent = (s.nets[k]||k) + ' — not on this page' + (also||' (no other page)');
-}
-function clearHi(){
-  scene.classList.remove('dimmed');
-  scene.querySelectorAll('.hot,.dim').forEach(el=>el.classList.remove('hot','dim'));
-  markNetSheets(null);
-  const s=MODEL.sheets[cur];
-  info.textContent=`${s.parts.length} parts · ${s.wires.length} wires · ${Object.keys(s.nets).length} nets`;
-}
-function showTip(e,txt){ tip.textContent=txt; tip.style.opacity=1;
-  const r=svg.getBoundingClientRect(); tip.style.left=(e.clientX-r.left+12)+'px'; tip.style.top=(e.clientY-r.top+12)+'px'; }
-function hideTip(){ tip.style.opacity=0; }
-
-// ── pan / zoom ──
-function applyView(){ scene.setAttribute('transform',`translate(${view.x},${view.y}) scale(${view.k})`); }
-let drag=null;
-svg.addEventListener('pointerdown',e=>{ if(e.target.closest('[data-net],[data-des]'))return;
-  drag={x:e.clientX,y:e.clientY,vx:view.x,vy:view.y}; svg.classList.add('panning'); svg.setPointerCapture(e.pointerId); });
-svg.addEventListener('pointermove',e=>{ if(!drag)return; view.x=drag.vx+(e.clientX-drag.x); view.y=drag.vy+(e.clientY-drag.y); applyView(); });
-svg.addEventListener('pointerup',e=>{ drag=null; svg.classList.remove('panning'); });
-svg.addEventListener('click',e=>{ if(!e.target.closest('[data-net]')&&pinnedNet){pinnedNet=null;clearHi();} });
-svg.addEventListener('wheel',e=>{ e.preventDefault();
-  const r=svg.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
-  const f=Math.exp(-e.deltaY*0.0015), nk=Math.min(20,Math.max(0.05,view.k*f));
-  view.x=mx-(mx-view.x)*(nk/view.k); view.y=my-(my-view.y)*(nk/view.k); view.k=nk; applyView();
-},{passive:false});
-
-// robust fit: ignore coordinate outliers so a stray far object doesn't shrink everything
-function fitBox(s){
-  if(s.frame) return s.frame;   // fit to the drawn page edge when present
-  const xs=[],ys=[];
-  for(const w of s.wires){xs.push(w[0],w[2]);ys.push(w[1],w[3]);}
-  for(const p of s.parts){if(p.box){xs.push(p.box[0],p.box[0]+p.box[2]);ys.push(p.box[1],p.box[1]+p.box[3]);}}
-  if(!xs.length)return s.bbox;
-  const pct=(a,q)=>{a=a.slice().sort((u,v)=>u-v);return a[Math.floor((a.length-1)*q)];};
-  return [pct(xs,0.01),pct(ys,0.01),pct(xs,0.99),pct(ys,0.99)];
-}
-function fit(){
-  const s=MODEL.sheets[cur]; const b=fitBox(s);
-  const r=svg.getBoundingClientRect();
-  const w=Math.max(b[2]-b[0],10), h=Math.max(b[3]-b[1],10);
-  const pad=40, k=Math.min((r.width-2*pad)/w,(r.height-2*pad)/h);
-  view.k=Math.min(k,8);
-  view.x=(r.width-(b[0]+b[2])*view.k)/2;
-  view.y=(r.height-(b[1]+b[3])*view.k)/2;
-  applyView();
-}
-document.getElementById('fit').onclick=fit;
-window.addEventListener('resize',()=>applyView());
-
-// ── search ──
-const q=document.getElementById('q');
-q.addEventListener('input',()=>{
-  const t=q.value.trim().toLowerCase(); if(!t){clearHi();pinnedNet=null;return;}
-  // net match first
-  const s=MODEL.sheets[cur];
-  const netKey=Object.keys(s.nets).find(k=>(s.nets[k]||k).toLowerCase()===t)
-            || Object.keys(s.nets).find(k=>(s.nets[k]||k).toLowerCase().includes(t));
-  if(netKey){ pinnedNet=netKey; hiNet(netKey); return; }
-  // part match: locate & center
-  const comp=[...scene.querySelectorAll('.comp[data-des]')].find(e=>e.dataset.des.toLowerCase().includes(t));
-  if(comp){ const bb=comp.getBBox(); const r=svg.getBoundingClientRect();
-    view.k=Math.min(6,view.k<1?2:view.k);
-    view.x=r.width/2-(bb.x+bb.width/2)*view.k; view.y=r.height/2-(bb.y+bb.height/2)*view.k; applyView();
-    comp.classList.add('hot'); setTimeout(()=>comp.classList.remove('hot'),1500);
+  if (infoEl) {
+    const name = netName(k);
+    const pages = [...(netSheets.get(k) || [])].filter(i => i !== cur).map(i => sheetLabel(i));
+    const also = pages.length ? ' · also on ' + pages.join(', ') : '';
+    infoEl.textContent = here
+      ? `${name} — ${sceneEl.querySelectorAll('.wire.hot').length} segments${also}`
+      : `${name} — not on this page${also}`;
   }
-});
-q.addEventListener('keydown',e=>{ if(e.key==='Enter'){ /* jump to first matching sheet */
-  const t=q.value.trim().toLowerCase(); if(!t)return;
-  for(let i=0;i<MODEL.sheets.length;i++){ if(MODEL.sheets[i].parts.some(p=>p.des.toLowerCase().includes(t))){ if(i!==cur)selectSheet(i); setTimeout(()=>q.dispatchEvent(new Event('input')),50); break; } }
-}});
+}
+function clearHi() {
+  sceneEl.querySelectorAll('.hot,.dim').forEach(el => el.classList.remove('hot', 'dim'));
+  setDefaultInfo();
+}
+function setDefaultInfo() {
+  if (!infoEl || !ready) return;
+  const s = M.sheets[cur];
+  infoEl.textContent = `${s.parts.length} parts · ${s.wires.length} wires · ${Object.keys(s.nets).length} nets`;
+}
+function setPinned(k) { pinned = k; renderStatus(); renderSidebar(); k ? hiNet(k) : clearHi(); }
 
-selectSheet(0);
+/* ---------- selection / navigation ---------- */
+function selectPart(des) { selDes = des; updateSelMark(); renderInspector(); }
+function closeSel() { selDes = null; updateSelMark(); renderInspector(); }
+function updateSelMark() {
+  sceneEl.querySelectorAll('.comp.sel').forEach(el => el.classList.remove('sel'));
+  if (selDes) {
+    const el = [...sceneEl.querySelectorAll('.comp[data-des]')].find(e => e.dataset.des === selDes);
+    if (el) el.classList.add('sel');
+  }
+}
+function selectSheet(i) {
+  if (i === cur) return;
+  cur = i; selDes = null;
+  renderScene(); fit(); updChrome(); renderSidebar(); renderInspector();
+}
+function goToPart(si, des) {
+  if (si !== cur) { cur = si; selDes = des; renderScene(); fit(); updChrome(); renderSidebar(); centerPart(des); }
+  else { selDes = des; centerPart(des); }
+  updateSelMark(); renderInspector();
+}
+function centerPart(des) {
+  const s = M.sheets[cur], p = s.parts.find(x => x.des === des);
+  if (!p) return;
+  let cx, cy;
+  if (p.box) { cx = p.box[0] + p.box[2] / 2; cy = p.box[1] + p.box[3] / 2; }
+  else if (p.pins && p.pins.length) {
+    cx = p.pins.reduce((a, q) => a + q[0], 0) / p.pins.length;
+    cy = p.pins.reduce((a, q) => a + q[1], 0) / p.pins.length;
+  } else return;
+  const r = svgEl.getBoundingClientRect();
+  view.k = Math.min(6, Math.max(view.k, 2.2));
+  view.x = r.width / 2 - cx * view.k; view.y = r.height / 2 - cy * view.k; applyView();
+  const el = [...sceneEl.querySelectorAll('.comp[data-des]')].find(e => e.dataset.des === des);
+  if (el) { el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1600); }
+}
+function goNet(k, pages) {
+  q = ''; searchFocus = false; $('tb-search').value = ''; renderDrop();
+  if (!pages.includes(cur) && pages.length) { cur = pages[0]; selDes = null; renderScene(); fit(); updChrome(); renderInspector(); }
+  setPinned(k);
+}
+
+/* ---------- tooltip ---------- */
+function showTip(e, txt) {
+  tipEl.textContent = txt; tipEl.style.opacity = 1;
+  tipEl.style.left = (e.clientX + 14) + 'px'; tipEl.style.top = (e.clientY + 14) + 'px';
+}
+function hideTip() { tipEl.style.opacity = 0; }
+function diffReason(des) {
+  if (!dctx.diff) return '';
+  if (dctx.addedSet.has(des)) return '\n+ added';
+  if (dctx.chgSet.has(des)) return '\n~ ' + dctx.diff.changed[des].join('\n~ ');
+  return '';
+}
+
+/* ---------- chrome rendering ---------- */
+function updChrome() {
+  $('tb-name').textContent = M.name || 'Schematic';
+  $('tb-sub').textContent = `${M.sheets.length} sheets · ${partCount} parts`;
+  const s = M.sheets[cur];
+  $('tb-crumb').textContent = s ? `${s.view} / ${s.page}` : '';
+  $('tb-theme').textContent = dark ? 'Light' : 'Dark';
+  $('tb-sheets-btn').style.display = sheetsOpen ? 'none' : 'block';
+  $('sidebar').style.display = sheetsOpen ? 'block' : 'none';
+  const d = dctx.diff;
+  const dd = $('tb-diff');
+  if (d) {
+    dd.style.display = 'flex';
+    dd.innerHTML = `<span style="color:#8B8578">vs ${esc(d.old)}</span>` +
+      `<span style="padding:2px 7px;border-radius:10px;background:rgba(26,127,55,.14);color:#1A7F37">+${d.added.length}</span>` +
+      `<span style="padding:2px 7px;border-radius:10px;background:rgba(207,34,46,.13);color:#CF222E">&#8722;${d.removed.length}</span>` +
+      `<span style="padding:2px 7px;border-radius:10px;background:rgba(154,103,0,.16);color:#9A6700">~${Object.keys(d.changed).length}</span>`;
+  } else dd.style.display = 'none';
+}
+function renderDrop() {
+  const drop = $('tb-drop');
+  const t = q.trim().toLowerCase();
+  if (!ready || !searchFocus || !t) { drop.style.display = 'none'; drop.innerHTML = ''; return; }
+  const badgeNet = "background:#EEF0FC;color:#4338CA;font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:600;padding:2px 5px;border-radius:4px;flex-shrink:0";
+  const badgePart = "background:#F7EFE4;color:#92400E;font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:600;padding:2px 5px;border-radius:4px;flex-shrink:0";
+  const results = [];
+  const seen = new Set();
+  for (const [k, set] of netSheets) {
+    const name = netName(k);
+    if (!name || name === 'SKIP') continue;
+    if (name.toLowerCase().includes(t) && !seen.has(name)) {
+      seen.add(name);
+      const pages = [...set];
+      results.push({ kind: 'NET', label: name, sub: pages.length + (pages.length > 1 ? ' pages' : ' page'), badge: badgeNet, act: () => goNet(k, pages) });
+      if (results.filter(r => r.kind === 'NET').length >= 6) break;
+    }
+  }
+  let pc = 0;
+  outer: for (let i = 0; i < M.sheets.length; i++) {
+    for (const p of M.sheets[i].parts) {
+      if (p.des.toLowerCase().includes(t)) {
+        const si = i, des = p.des;
+        results.push({ kind: 'PART', label: des, sub: sheetLabel(i), badge: badgePart, act: () => { q = ''; searchFocus = false; $('tb-search').value = ''; renderDrop(); goToPart(si, des); } });
+        if (++pc >= 6) break outer;
+      }
+    }
+  }
+  drop.style.display = 'block';
+  if (!results.length) { drop.innerHTML = `<div style="padding:10px 12px;font-size:11.5px;color:#8B8578">No matching part or net</div>`; return; }
+  drop.innerHTML = results.map((r, i) =>
+    `<div class="sres" data-i="${i}" style="display:flex;align-items:center;gap:8px;padding:7px 10px;cursor:pointer">` +
+    `<span style="${r.badge}">${r.kind}</span>` +
+    `<span style="font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:#221F1A;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.label)}</span>` +
+    `<span style="font-size:10.5px;color:#8B8578;margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px">${esc(r.sub)}</span></div>`
+  ).join('');
+  [...drop.querySelectorAll('.sres')].forEach(el => el.addEventListener('mousedown', ev => { ev.preventDefault(); results[+el.dataset.i].act(); }));
+}
+function renderSidebar() {
+  const bar = $('sidebar');
+  const byView = new Map();
+  M.sheets.forEach((s, i) => { if (!byView.has(s.view)) byView.set(s.view, []); byView.get(s.view).push(i); });
+  const pinSet = pinned ? netSheets.get(pinned) : null;
+  let h = `<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 10px 6px 16px">` +
+    `<span style="font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#8B8578">Sheets</span>` +
+    `<button id="sb-collapse" class="iconx" title="Collapse panel" style="font-size:14px">&#171;</button></div>`;
+  for (const [vw, idxs] of byView) {
+    const open = !collapsed[vw];
+    h += `<div><div class="sb-grp" data-vw="${esc(vw)}" style="display:flex;align-items:baseline;gap:6px;padding:8px 14px 3px 16px;cursor:pointer">` +
+      `<span style="font-size:9px;color:#A19B8E;width:9px;flex-shrink:0">${open ? '&#9662;' : '&#9656;'}</span>` +
+      `<span style="font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#57524A;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(vw.replace(/^\d+_/, ''))}</span>` +
+      `<span style="font-size:10px;color:#A19B8E;font-family:'IBM Plex Mono',monospace;margin-left:auto">${idxs.length}</span></div>`;
+    if (open) {
+      for (const i of idxs) {
+        const s = M.sheets[i], active = i === cur;
+        const hasNet = !!(pinSet && pinSet.has(i) && !active);
+        const th = thumbs[i] ? `background-image:url(&quot;${thumbs[i]}&quot;);` : '';
+        h += `<div class="pgrow${active ? ' active' : ''}" data-i="${i}">` +
+          `<div style="width:62px;height:42px;background:#FFFFFF;${th}background-size:contain;background-repeat:no-repeat;background-position:center;border:1px solid ${active ? '#C9A97F' : '#E4E0D3'};border-radius:4px;flex-shrink:0"></div>` +
+          `<div style="min-width:0;flex:1">` +
+          `<div style="font-size:12px;font-weight:500;color:#221F1A;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.page || s.view)}</div>` +
+          `<div style="display:flex;align-items:center;gap:6px;margin-top:1px">` +
+          `<span style="font-size:10px;color:#A19B8E;font-family:'IBM Plex Mono',monospace">${s.parts.length} parts</span>` +
+          (hasNet ? `<span style="width:6px;height:6px;border-radius:50%;background:#EA580C;display:inline-block;flex-shrink:0" title="pinned net on this page"></span>` : '') +
+          `</div></div></div>`;
+      }
+    }
+  }
+  bar.innerHTML = h;
+  $('sb-collapse').addEventListener('click', toggleSheets);
+  [...bar.querySelectorAll('.sb-grp')].forEach(el => el.addEventListener('click', () => { const v = el.dataset.vw; collapsed = { ...collapsed, [v]: !collapsed[v] }; renderSidebar(); }));
+  [...bar.querySelectorAll('.pgrow')].forEach(el => el.addEventListener('click', () => selectSheet(+el.dataset.i)));
+}
+function renderStatus() {
+  const st = $('status'); infoEl = null;
+  if (!pinned) {
+    st.innerHTML = `<div style="background:rgba(251,250,247,0.92);border:1px solid #E0DCD1;border-radius:8px;padding:5px 9px;font-size:11px;font-family:'IBM Plex Mono',monospace;color:#6E6A60;pointer-events:none;width:fit-content;white-space:nowrap"><span id="info"></span></div>`;
+    infoEl = $('info'); setDefaultInfo(); return;
+  }
+  const s = M.sheets[cur];
+  const segs = s.wires.filter(w => w[4] === pinned).length;
+  const onPage = segs > 0 || (s.labels || []).some(l => l.key === pinned) || (s.connectors || []).some(f => f.key === pinned);
+  const meta = onPage ? segs + ' segments · this page' : 'not on this page';
+  const pages = [...(netSheets.get(pinned) || [])].filter(i => i !== cur);
+  let chips = '';
+  if (pages.length) {
+    chips = `<div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center"><span style="font-size:10px;color:#8B8578;margin-right:2px">also on</span>` +
+      pages.map(i => `<button class="chip" data-i="${i}">${esc(sheetLabel(i))}</button>`).join('') + `</div>`;
+  }
+  st.innerHTML = `<div style="background:rgba(251,250,247,0.96);border:1px solid #E0DCD1;border-radius:10px;padding:8px 10px;box-shadow:0 8px 20px rgba(24,20,10,0.10);display:flex;flex-direction:column;gap:6px;max-width:560px">` +
+    `<div style="display:flex;align-items:center;gap:8px">` +
+    `<span style="width:8px;height:8px;border-radius:50%;background:#EA580C;flex-shrink:0"></span>` +
+    `<span style="font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:#221F1A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(netName(pinned))}</span>` +
+    `<span style="font-size:10.5px;color:#8B8578;font-family:'IBM Plex Mono',monospace;white-space:nowrap">${meta}</span>` +
+    `<button id="pin-x" title="Clear pinned net" style="margin-left:auto;border:none;background:transparent;cursor:pointer;color:#8B8578;font-size:14px;line-height:1;padding:0 2px">&times;</button></div>` +
+    chips + `</div>`;
+  $('pin-x').addEventListener('click', () => setPinned(null));
+  [...st.querySelectorAll('.chip')].forEach(el => el.addEventListener('click', () => selectSheet(+el.dataset.i)));
+}
+function renderInspector() {
+  const ins = $('inspector');
+  if (!selDes) { ins.style.display = 'none'; ins.innerHTML = ''; return; }
+  const order = [cur, ...M.sheets.map((_, i) => i).filter(i => i !== cur)];
+  let sel = null, si = cur;
+  for (const i of order) { const p = M.sheets[i].parts.find(x => x.des === selDes); if (p) { sel = p; si = i; break; } }
+  if (!sel) { ins.style.display = 'none'; ins.innerHTML = ''; return; }
+  const diffNote = diffReason(selDes).trim();
+  const pins = (sel.pins || []).map(pin => ({
+    num: pin[3] || '·', name: pin[4] || '—',
+    net: pin[2] ? (netName(pin[2]) || pin[2]) : '(unconnected)', key: pin[2] || ''
+  }));
+  ins.style.display = 'block';
+  ins.innerHTML =
+    `<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 10px 6px 16px">` +
+    `<span style="font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#8B8578">Part</span>` +
+    `<button id="ins-x" class="iconx">&times;</button></div>` +
+    `<div style="padding:0 16px 12px;border-bottom:1px solid #EAE6DA">` +
+    `<div style="font-family:'IBM Plex Mono',monospace;font-size:20px;font-weight:600;color:#221F1A">${esc(sel.des)}</div>` +
+    `<div style="font-size:11.5px;color:#6E6A60;margin-top:3px;word-break:break-word;line-height:1.35">${esc(sel.pkg || '—')}</div>` +
+    `<div style="font-size:10.5px;color:#A19B8E;font-family:'IBM Plex Mono',monospace;margin-top:5px">${esc(sheetLabel(si))}</div>` +
+    (diffNote ? `<div style="margin-top:6px;font-size:11px;color:#9A6700;font-family:'IBM Plex Mono',monospace;white-space:pre-line">${esc(diffNote)}</div>` : '') +
+    `</div><div style="padding:8px 8px 14px">` +
+    `<div style="font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#8B8578;padding:2px 8px 6px">Pins · ${pins.length}</div>` +
+    pins.map((pn, i) =>
+      `<div class="pinrow" data-i="${i}" style="display:grid;grid-template-columns:30px 1fr;gap:2px 8px;padding:5px 8px;border-radius:6px;cursor:pointer">` +
+      `<span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#A19B8E;text-align:right;padding-top:2px">${esc(pn.num)}</span>` +
+      `<span style="min-width:0"><span style="display:block;font-size:11.5px;color:#221F1A;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(pn.name)}</span>` +
+      `<span style="display:block;font-family:'IBM Plex Mono',monospace;font-size:10px;color:#4338CA;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(pn.net)}</span></span></div>`
+    ).join('') + `</div>`;
+  $('ins-x').addEventListener('click', closeSel);
+  [...ins.querySelectorAll('.pinrow')].forEach(el => el.addEventListener('click', () => { const k = pins[+el.dataset.i].key; if (k) setPinned(k); }));
+}
+function renderBom() {
+  const bom = $('bom');
+  if (!bomOpen) { bom.style.display = 'none'; bom.innerHTML = ''; return; }
+  const t = bomQ.trim().toLowerCase();
+  const rows = bomAll.filter(r => !t || r.pkg.toLowerCase().includes(t) || r.refs.some(x => x.des.toLowerCase().includes(t)));
+  bom.style.display = 'block';
+  bom.innerHTML =
+    `<div id="bom-back" style="position:fixed;inset:0;z-index:100;background:rgba(24,20,12,0.38);display:flex;align-items:center;justify-content:center">` +
+    `<div id="bom-card" style="width:min(800px,92vw);max-height:78vh;display:flex;flex-direction:column;background:#FBFAF7;border-radius:16px;box-shadow:0 24px 64px rgba(20,16,8,0.30);overflow:hidden">` +
+    `<div style="display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid #E7E3D7">` +
+    `<div style="min-width:0"><div style="font-size:15px;font-weight:700">Bill of materials</div>` +
+    `<div style="font-size:11px;color:#8B8578;font-family:'IBM Plex Mono',monospace;margin-top:1px">${partCount} parts · ${bomAll.length} packages · ${M.sheets.length} sheets</div></div>` +
+    `<div style="flex:1"></div>` +
+    `<input id="bom-q" class="srch" value="${esc(bomQ)}" placeholder="Filter packages or refs…" autocomplete="off" spellcheck="false" style="width:220px;height:30px;padding:0 10px;font-size:11.5px">` +
+    `<button id="bom-x" class="iconx" style="font-size:17px">&times;</button></div>` +
+    `<div style="display:grid;grid-template-columns:220px 48px 1fr;gap:14px;padding:8px 18px;border-bottom:1px solid #E7E3D7;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8B8578">` +
+    `<span>Package</span><span style="text-align:right">Qty</span><span>References</span></div>` +
+    `<div id="bom-rows" style="overflow-y:auto">` + bomRowsHTML(rows) + `</div></div></div>`;
+  $('bom-back').addEventListener('click', () => { bomOpen = false; renderBom(); });
+  $('bom-card').addEventListener('click', e => e.stopPropagation());
+  $('bom-x').addEventListener('click', () => { bomOpen = false; renderBom(); });
+  const bq = $('bom-q');
+  bq.addEventListener('input', e => { bomQ = e.target.value; const rr = bomAll.filter(r => { const tt = bomQ.trim().toLowerCase(); return !tt || r.pkg.toLowerCase().includes(tt) || r.refs.some(x => x.des.toLowerCase().includes(tt)); }); $('bom-rows').innerHTML = bomRowsHTML(rr); bindBomRefs(); });
+  bindBomRefs();
+}
+function bomRowsHTML(rows) {
+  return rows.map(r =>
+    `<div style="display:grid;grid-template-columns:220px 48px 1fr;gap:14px;padding:8px 18px;border-bottom:1px solid #F0EDE3;align-items:start">` +
+    `<span style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:#221F1A;word-break:break-word;line-height:1.4">${esc(r.pkg)}</span>` +
+    `<span style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:#6E6A60;text-align:right">${r.refs.length}</span>` +
+    `<span style="display:flex;flex-wrap:wrap;gap:4px">` +
+    r.refs.map(x => `<button class="bomref" data-si="${x.si}" data-des="${esc(x.des)}">${esc(x.des)}</button>`).join('') +
+    `</span></div>`
+  ).join('');
+}
+function bindBomRefs() {
+  [...$('bom-rows').querySelectorAll('.bomref')].forEach(el => el.addEventListener('click', () => {
+    bomOpen = false; renderBom(); goToPart(+el.dataset.si, el.dataset.des);
+  }));
+}
+
+/* ---------- ui handlers ---------- */
+function toggleSheets() { sheetsOpen = !sheetsOpen; updChrome(); }
+function toggleTheme() {
+  dark = !dark;
+  $('stage').classList.toggle('dark', dark);
+  svgEl.classList.toggle('dark', dark);
+  miniEl.classList.toggle('dark', dark);
+  updChrome();
+}
+function bindToolbar() {
+  $('tb-sheets-btn').addEventListener('click', toggleSheets);
+  $('tb-theme').addEventListener('click', toggleTheme);
+  $('tb-bom').addEventListener('click', () => { bomOpen = true; bomQ = ''; renderBom(); });
+  $('tb-fit').addEventListener('click', fit);
+  $('tb-zin').addEventListener('click', () => zoomBy(1.3));
+  $('tb-zout').addEventListener('click', () => zoomBy(0.77));
+  const si = $('tb-search');
+  si.addEventListener('input', e => { q = e.target.value; searchFocus = true; renderDrop(); });
+  si.addEventListener('focus', () => { searchFocus = true; renderDrop(); });
+  si.addEventListener('blur', () => setTimeout(() => { searchFocus = false; renderDrop(); }, 150));
+  window.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      if (bomOpen) { bomOpen = false; renderBom(); }
+      else if (selDes) closeSel();
+      else if (pinned) setPinned(null);
+    }
+  });
+  window.addEventListener('resize', () => { updateVp(); });
+}
+
+init();
 </script></body></html>"""
 
 
