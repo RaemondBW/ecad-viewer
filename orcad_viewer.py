@@ -232,7 +232,7 @@ html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#E9E7E1;
 .sch-mini .mini-wire{stroke:var(--p-wire);stroke-width:1;vector-effect:non-scaling-stroke;opacity:.5}
 .sch-mini .mini-part{fill:var(--p-comp);opacity:.35}
 .sch-mini .mini-vp{fill:rgba(234,88,12,0.10);stroke:#EA580C;stroke-width:1.4;vector-effect:non-scaling-stroke;cursor:grab}
-body.xmodal .xtop,body.xmodal #sidebar{display:none!important}
+body.xmodal .xtop,body.xmodal #sidebar,body.xmodal #minimap,body.xmodal #inspector{display:none!important}
 </style></head>
 <body>
 <div style="position:relative;height:100vh;display:flex;flex-direction:column;overflow:hidden">
@@ -631,7 +631,13 @@ function init() {
   if (XMODAL) document.body.classList.add('xmodal');
   const _xn = XQP.get('xnet'), _xr = XQP.get('ref');
   if (_xn !== null && XP && XP.xnets[+_xn]) { const k = XP.xnets[+_xn].sch; goNet(k, [...(netSheets.get(k) || [])]); centerNet(k); }
-  else if (_xr) { for (let i = 0; i < M.sheets.length; i++) if (M.sheets[i].parts.some(p => p.des === _xr)) { goToPart(i, _xr); break; } }
+  else if (_xr) { for (let i = 0; i < M.sheets.length; i++) if (M.sheets[i].parts.some(p => p.des === _xr)) {
+    if (XMODAL) {                    // clean preview: highlight + fit the part, no card / mini-map
+      if (i !== cur) { cur = i; renderScene(); fit(); updChrome(); renderSidebar(); }
+      selDes = _xr; updateSelMark(); fitPart(_xr);
+    } else goToPart(i, _xr);
+    break;
+  } }
 }
 
 /* ---------- scene ---------- */
@@ -688,7 +694,7 @@ function bindCanvas() {
     if (des !== overDes) {
       if (des) {                       // entered a part
         cancelCardClose();
-        if (des !== selDes && !cardPinned) { hoverDes = des; clearTimeout(hoverTimer);
+        if (des !== selDes && !cardPinned && !XMODAL) { hoverDes = des; clearTimeout(hoverTimer);
           hoverTimer = setTimeout(() => { if (hoverDes === des && !cardPinned) selectPart(des); }, 90); }
       } else {                         // left a part onto empty canvas
         hoverDes = null; clearTimeout(hoverTimer);
@@ -826,6 +832,17 @@ function goToPart(si, des) {
   if (si !== cur) { cur = si; selDes = des; renderScene(); fit(); updChrome(); renderSidebar(); centerPart(des); }
   else { selDes = des; centerPart(des); }
   updateSelMark(); renderInspector();
+}
+function fitPart(des) {   // zoom so the whole part symbol (box + pins) fits, for the modal preview
+  const s = M.sheets[cur], p = s.parts.find(x => x.des === des);
+  if (!p) return;
+  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  if (p.box) { x0 = p.box[0]; y0 = p.box[1]; x1 = p.box[0] + p.box[2]; y1 = p.box[1] + p.box[3]; }
+  (p.pins || []).forEach(q => { x0 = Math.min(x0, q[0]); y0 = Math.min(y0, q[1]); x1 = Math.max(x1, q[0]); y1 = Math.max(y1, q[1]); });
+  if (x1 < x0) return;
+  const r = svgEl.getBoundingClientRect(), m = 0.35, w = Math.max(x1 - x0, 20), h = Math.max(y1 - y0, 20);
+  view.k = Math.min(8, Math.min(r.width / (w * (1 + m)), r.height / (h * (1 + m))));
+  view.x = r.width / 2 - (x0 + x1) / 2 * view.k; view.y = r.height / 2 - (y0 + y1) / 2 * view.k; applyView();
 }
 function centerPart(des) {
   const s = M.sheets[cur], p = s.parts.find(x => x.des === des);
