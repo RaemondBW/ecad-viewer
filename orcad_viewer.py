@@ -587,12 +587,13 @@ function init() {
   });
   const bomMap = new Map();
   M.sheets.forEach((s, i) => s.parts.forEach(p => {
-    const key = p.pkg || '(no package)';
-    if (!bomMap.has(key)) bomMap.set(key, []);
-    bomMap.get(key).push({ des: p.des, si: i });
+    const val = p.val || '', pkg = p.pkg || '(no package)';
+    const key = val + '' + pkg;
+    if (!bomMap.has(key)) bomMap.set(key, { val, pkg, refs: [] });
+    bomMap.get(key).refs.push({ des: p.des, si: i });
   }));
-  bomAll = [...bomMap.entries()].map(([pkg, refs]) => ({ pkg, refs }))
-    .sort((a, b) => b.refs.length - a.refs.length || a.pkg.localeCompare(b.pkg));
+  bomAll = [...bomMap.values()].sort((a, b) =>
+    b.refs.length - a.refs.length || a.val.localeCompare(b.val) || a.pkg.localeCompare(b.pkg));
   partCount = M.sheets.reduce((n, s) => n + s.parts.length, 0);
   thumbs = M.sheets.map(s => R.thumbDataURI(s));
 
@@ -1041,31 +1042,33 @@ function renderBom() {
   const bom = $('bom');
   if (!bomOpen) { bom.style.display = 'none'; bom.innerHTML = ''; return; }
   const t = bomQ.trim().toLowerCase();
-  const rows = bomAll.filter(r => !t || r.pkg.toLowerCase().includes(t) || r.refs.some(x => x.des.toLowerCase().includes(t)));
+  const rows = bomAll.filter(r => !t || r.val.toLowerCase().includes(t) || r.pkg.toLowerCase().includes(t) || r.refs.some(x => x.des.toLowerCase().includes(t)));
+  const lineItems = bomAll.length, valued = bomAll.filter(r => r.val).length;
   bom.style.display = 'block';
   bom.innerHTML =
     `<div id="bom-back" style="position:fixed;inset:0;z-index:100;background:rgba(24,20,12,0.38);display:flex;align-items:center;justify-content:center">` +
-    `<div id="bom-card" style="width:min(800px,92vw);max-height:78vh;display:flex;flex-direction:column;background:#FBFAF7;border-radius:16px;box-shadow:0 24px 64px rgba(20,16,8,0.30);overflow:hidden">` +
+    `<div id="bom-card" style="width:min(880px,94vw);max-height:80vh;display:flex;flex-direction:column;background:#FBFAF7;border-radius:16px;box-shadow:0 24px 64px rgba(20,16,8,0.30);overflow:hidden">` +
     `<div style="display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid #E7E3D7">` +
     `<div style="min-width:0"><div style="font-size:15px;font-weight:700">Bill of materials</div>` +
-    `<div style="font-size:11px;color:#8B8578;font-family:'IBM Plex Mono',monospace;margin-top:1px">${partCount} parts · ${bomAll.length} packages · ${M.sheets.length} sheets</div></div>` +
+    `<div style="font-size:11px;color:#8B8578;font-family:'IBM Plex Mono',monospace;margin-top:1px">${partCount} parts · ${lineItems} line items · ${valued} valued · ${M.sheets.length} sheets</div></div>` +
     `<div style="flex:1"></div>` +
-    `<input id="bom-q" class="srch" value="${esc(bomQ)}" placeholder="Filter packages or refs…" autocomplete="off" spellcheck="false" style="width:220px;height:30px;padding:0 10px;font-size:11.5px">` +
+    `<input id="bom-q" class="srch" value="${esc(bomQ)}" placeholder="Filter value, package, or ref…" autocomplete="off" spellcheck="false" style="width:230px;height:30px;padding:0 10px;font-size:11.5px">` +
     `<button id="bom-x" class="iconx" style="font-size:17px">&times;</button></div>` +
-    `<div style="display:grid;grid-template-columns:220px 48px 1fr;gap:14px;padding:8px 18px;border-bottom:1px solid #E7E3D7;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8B8578">` +
-    `<span>Package</span><span style="text-align:right">Qty</span><span>References</span></div>` +
+    `<div style="display:grid;grid-template-columns:96px 150px 44px 1fr;gap:14px;padding:8px 18px;border-bottom:1px solid #E7E3D7;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8B8578">` +
+    `<span>Value</span><span>Package</span><span style="text-align:right">Qty</span><span>References</span></div>` +
     `<div id="bom-rows" style="overflow-y:auto">` + bomRowsHTML(rows) + `</div></div></div>`;
   $('bom-back').addEventListener('click', () => { bomOpen = false; renderBom(); });
   $('bom-card').addEventListener('click', e => e.stopPropagation());
   $('bom-x').addEventListener('click', () => { bomOpen = false; renderBom(); });
   const bq = $('bom-q');
-  bq.addEventListener('input', e => { bomQ = e.target.value; const rr = bomAll.filter(r => { const tt = bomQ.trim().toLowerCase(); return !tt || r.pkg.toLowerCase().includes(tt) || r.refs.some(x => x.des.toLowerCase().includes(tt)); }); $('bom-rows').innerHTML = bomRowsHTML(rr); bindBomRefs(); });
+  bq.addEventListener('input', e => { bomQ = e.target.value; const tt = bomQ.trim().toLowerCase(); const rr = bomAll.filter(r => !tt || r.val.toLowerCase().includes(tt) || r.pkg.toLowerCase().includes(tt) || r.refs.some(x => x.des.toLowerCase().includes(tt))); $('bom-rows').innerHTML = bomRowsHTML(rr); bindBomRefs(); });
   bindBomRefs();
 }
 function bomRowsHTML(rows) {
   return rows.map(r =>
-    `<div style="display:grid;grid-template-columns:220px 48px 1fr;gap:14px;padding:8px 18px;border-bottom:1px solid #F0EDE3;align-items:start">` +
-    `<span style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:#221F1A;word-break:break-word;line-height:1.4">${esc(r.pkg)}</span>` +
+    `<div style="display:grid;grid-template-columns:96px 150px 44px 1fr;gap:14px;padding:8px 18px;border-bottom:1px solid #F0EDE3;align-items:start">` +
+    `<span style="font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:${r.val ? '#C2410C' : '#A19B8E'};word-break:break-word;line-height:1.4">${esc(r.val || '—')}</span>` +
+    `<span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#6E6A60;word-break:break-word;line-height:1.4">${esc(r.pkg)}</span>` +
     `<span style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:#6E6A60;text-align:right">${r.refs.length}</span>` +
     `<span style="display:flex;flex-wrap:wrap;gap:4px">` +
     r.refs.map(x => `<button class="bomref" data-si="${x.si}" data-des="${esc(x.des)}">${esc(x.des)}</button>`).join('') +
