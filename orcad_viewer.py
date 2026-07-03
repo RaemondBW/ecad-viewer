@@ -66,6 +66,24 @@ def build_model(dsn_path, diff_path=None):
     design = oc.load_dsn(dsn_path)
     model = oc.build_sheets(design)
     model["name"] = Path(dsn_path).stem
+    # Per-designator values come from a sibling OrCAD BOM export (the schematic
+    # streams don't carry them). Attach val to each part when present.
+    bom = {}
+    for ext in (".BOM", ".bom", ".Bom"):
+        p = Path(dsn_path).with_suffix(ext)
+        if p.exists():
+            bom = oc.parse_bom(p)
+            break
+    if bom:
+        n = 0
+        for s in model["sheets"]:
+            for part in s["parts"]:
+                v = bom.get(part["des"])
+                if v:
+                    part["val"] = v
+                    n += 1
+        model["hasValues"] = True
+        print(f"  BOM: {p.name} → values on {n} parts")
     if diff_path:
         old_design = oc.load_dsn(diff_path)
         _attach_diff(model, old_design, design, Path(diff_path).stem)
@@ -193,6 +211,14 @@ html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#E9E7E1;
 .sch-scene .pin.hot{fill:var(--hot,var(--p-hot))}
 .sch-scene .nlabel.hot{fill:var(--hot,var(--p-hot));font-weight:700}
 .sch-scene .comp.hot rect{stroke:var(--hot,var(--p-hot));stroke-width:2}
+/* transient net highlight when hovering a net in the part card */
+.sch-scene .wire.preview{stroke:var(--p-hot);stroke-width:2.6;opacity:1}
+.sch-scene .wire.bus.preview{stroke-width:3.8}
+.sch-scene .pin.preview{fill:var(--p-hot);opacity:1}
+.sch-scene .nlabel.preview{fill:var(--p-hot);font-weight:700;opacity:1}
+.sch-scene .flagg.preview{opacity:1}
+.sch-scene .flagg.preview .flag{stroke:var(--p-hot)}
+.sch-scene .flagg.preview .flabel{fill:var(--p-hot);font-weight:700}
 .sch-scene .comp.sel rect{stroke:var(--p-hot);stroke-width:2}
 .sch-scene .comp.sel .sym{stroke:var(--p-hot)}
 .sch-scene .comp.sel .sym.fill{fill:var(--p-hot)}
@@ -246,7 +272,7 @@ html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#E9E7E1;
         <svg id="mini" class="sch-scene sch-mini" style="display:block;width:188px;height:126px;touch-action:none"></svg>
       </div>
     </div>
-    <div id="inspector" style="display:none;width:290px;flex-shrink:0;border-left:1px solid #E0DCD1;background:#FBFAF7;overflow-y:auto"></div>
+    <div id="inspector" style="display:none;position:absolute;top:14px;right:14px;width:300px;max-height:calc(100% - 28px);z-index:35;background:rgba(251,250,247,0.97);border:1px solid #E0DCD1;border-radius:12px;box-shadow:0 16px 40px rgba(20,16,8,0.22);overflow-y:auto;-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)"></div>
   </div>
   <!-- bom modal -->
   <div id="bom" style="display:none"></div>
@@ -444,7 +470,13 @@ html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#E9E7E1;
       if (p.sym !== 'box' && p.pins.length === 2) {
         const a = p.pins[0], b = p.pins[1];
         const gg = symSVG(p.sym, [a[0], a[1]], [b[0], b[1]]);
-        h += gg.svg + `<text class="lbl" x="${gg.lx}" y="${gg.ly}" font-size="10" text-anchor="middle" dominant-baseline="central">${esc(p.des)}</text>`;
+        h += gg.svg;
+        if (p.val) {   // designator + value stacked beside the symbol
+          h += `<text class="lbl" x="${gg.lx}" y="${gg.ly - 5}" font-size="9" text-anchor="middle" dominant-baseline="central">${esc(p.des)}</text>` +
+               `<text class="val" x="${gg.lx}" y="${gg.ly + 5}" font-size="9" text-anchor="middle" dominant-baseline="central">${esc(p.val)}</text>`;
+        } else {
+          h += `<text class="lbl" x="${gg.lx}" y="${gg.ly}" font-size="10" text-anchor="middle" dominant-baseline="central">${esc(p.des)}</text>`;
+        }
       } else {
         const [bx, by, bw, bh] = p.box, cx = bx + bw / 2, cy = by + bh / 2;
         const named = p.pins.some(pin => pin[4]);
@@ -532,6 +564,11 @@ function nextColor() {
 }
 function isPinned(k) { return pinNets.some(p => p.key === k); }
 let svgEl, sceneEl, miniEl, vpEl, tipEl, infoEl, drag = null, miniDrag = false, suppressClick = false;
+let hoverDes = null, hoverTimer = 0, overDes = null, closeTimer = 0;
+// close the hover card shortly after the cursor leaves both the part and the
+// card; entering the card cancels the pending close so it stays reachable
+function scheduleCardClose() { clearTimeout(closeTimer); closeTimer = setTimeout(() => { if (selDes) closeSel(); }, 260); }
+function cancelCardClose() { clearTimeout(closeTimer); }
 
 function netName(k) { return netNames.get(k) || k; }
 function sheetLabel(i) { const s = M.sheets[i]; return s.page || s.view; }
@@ -561,6 +598,10 @@ function init() {
 
   svgEl = $('svg'); sceneEl = $('scene'); miniEl = $('mini'); tipEl = $('tip');
   bindCanvas(); bindMini(); bindToolbar();
+  // keep the hover card open while the cursor is over it
+  const insEl = $('inspector');
+  insEl.addEventListener('pointerenter', cancelCardClose);
+  insEl.addEventListener('pointerleave', () => { if (selDes) scheduleCardClose(); });
   ready = true;
   updChrome(); renderSidebar(); renderScene(); fit();
 }
@@ -613,15 +654,27 @@ function bindCanvas() {
       if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
       view.x = drag.vx + dx; view.y = drag.vy + dy; applyView(); return;
     }
+    // hover a part → pop up its detail card; leaving it → schedule close
     const c = e.target.closest('.comp[data-des]');
-    if (c) showTip(e, c.dataset.des + (c.dataset.pkg ? '\n' + c.dataset.pkg : '') + diffReason(c.dataset.des));
-    else hideTip();
+    const des = c ? c.dataset.des : null;
+    if (des !== overDes) {
+      if (des) {                       // entered a part
+        cancelCardClose();
+        if (des !== selDes) { hoverDes = des; clearTimeout(hoverTimer);
+          hoverTimer = setTimeout(() => { if (hoverDes === des) selectPart(des); }, 90); }
+      } else {                         // left a part onto empty canvas
+        hoverDes = null; clearTimeout(hoverTimer);
+        if (selDes) scheduleCardClose();
+      }
+      overDes = des;
+    }
+    hideTip();
   });
   el.addEventListener('pointerup', () => {
     if (drag && drag.moved) suppressClick = true;
     drag = null;
   });
-  el.addEventListener('pointerleave', hideTip);
+  el.addEventListener('pointerleave', () => { hideTip(); overDes = null; if (selDes) scheduleCardClose(); });
   el.addEventListener('pointerover', e => {
     const n = e.target.closest('[data-net]'); if (n && !pinNets.length) hoverNet(n.dataset.net);
   });
@@ -678,16 +731,16 @@ function bindMini() {
 
 /* ---------- highlight / info ---------- */
 // paint every pinned net in its own colour (via the per-element --hot var);
-// dim everything else while any net is pinned
+// other nets keep full opacity (no dimming)
 function applyPins() {
   const map = new Map(pinNets.map(p => [p.key, p.color]));
-  const any = pinNets.length > 0;
   sceneEl.querySelectorAll('[data-net]').forEach(el => {
     const c = map.get(el.dataset.net);
-    if (c) { el.classList.add('hot'); el.classList.remove('dim'); el.style.setProperty('--hot', c); }
-    else { el.classList.remove('hot'); el.style.removeProperty('--hot'); el.classList.toggle('dim', any); }
+    if (c) { el.classList.add('hot'); el.style.setProperty('--hot', c); }
+    else { el.classList.remove('hot'); el.style.removeProperty('--hot'); }
+    el.classList.remove('dim');
   });
-  if (!any) setDefaultInfo();
+  if (!pinNets.length) setDefaultInfo();
 }
 // transient single-net highlight on hover (only when nothing is pinned)
 function hoverNet(k) {
@@ -696,7 +749,7 @@ function hoverNet(k) {
   els.forEach(el => {
     const on = el.dataset.net === k && k !== '';
     el.classList.toggle('hot', on); el.style.removeProperty('--hot');
-    el.classList.toggle('dim', here && !on);
+    el.classList.remove('dim');   // highlight only; don't dim the rest
   });
   if (infoEl) {
     const name = netName(k);
@@ -906,6 +959,32 @@ function renderStatus() {
   [...st.querySelectorAll('.pin-x')].forEach(el => el.addEventListener('click', () => removePinAt(+el.dataset.p)));
   [...st.querySelectorAll('.chip')].forEach(el => el.addEventListener('click', () => selectSheet(+el.dataset.i)));
 }
+// transient net highlight driven by hovering a net row in the part card
+function previewNet(k) {
+  clearPreview();
+  if (!k) return;
+  sceneEl.querySelectorAll('[data-net]').forEach(el => { if (el.dataset.net === k) el.classList.add('preview'); });
+}
+function clearPreview() { sceneEl.querySelectorAll('.preview').forEach(el => el.classList.remove('preview')); }
+// place the floating card next to the selected part (flip / clamp to stay in view)
+function positionInspectorNear(des) {
+  const s = M.sheets[cur], p = s.parts.find(x => x.des === des), ins = $('inspector');
+  if (!p || !svgEl || !ins.offsetParent) return;
+  let cx, cy;
+  if (p.box) { cx = p.box[0] + p.box[2] / 2; cy = p.box[1] + p.box[3] / 2; }
+  else if (p.pins && p.pins.length) { cx = p.pins.reduce((a, q) => a + q[0], 0) / p.pins.length; cy = p.pins.reduce((a, q) => a + q[1], 0) / p.pins.length; }
+  else return;
+  const sv = svgEl.getBoundingClientRect(), row = ins.offsetParent.getBoundingClientRect();
+  const px = sv.left + cx * view.k + view.x, py = sv.top + cy * view.k + view.y;
+  const w = ins.offsetWidth || 300, h = Math.min(ins.offsetHeight || 320, sv.height - 24);
+  const GAP = 110;                             // keep clear of the cursor / part
+  let left = px + GAP;                         // prefer to the right of the part
+  if (left + w > sv.right - 10) left = px - GAP - w;   // flip to the left
+  left = Math.max(sv.left + 10, Math.min(left, sv.right - w - 10));
+  let top = Math.max(sv.top + 10, Math.min(py - 80, sv.bottom - h - 10));
+  ins.style.left = (left - row.left) + 'px'; ins.style.top = (top - row.top) + 'px';
+  ins.style.right = 'auto'; ins.style.bottom = 'auto';
+}
 function renderInspector() {
   const ins = $('inspector');
   if (!selDes) { ins.style.display = 'none'; ins.innerHTML = ''; return; }
@@ -920,11 +999,14 @@ function renderInspector() {
   }));
   ins.style.display = 'block';
   ins.innerHTML =
-    `<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 10px 6px 16px">` +
+    `<div id="ins-head" style="display:flex;align-items:center;justify-content:space-between;padding:12px 10px 6px 16px;cursor:move;user-select:none">` +
     `<span style="font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#8B8578">Part</span>` +
-    `<button id="ins-x" class="iconx">&times;</button></div>` +
+    `<button id="ins-x" class="iconx" style="cursor:pointer">&times;</button></div>` +
     `<div style="padding:0 16px 12px;border-bottom:1px solid #EAE6DA">` +
-    `<div style="font-family:'IBM Plex Mono',monospace;font-size:20px;font-weight:600;color:#221F1A">${esc(sel.des)}</div>` +
+    `<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">` +
+    `<span style="font-family:'IBM Plex Mono',monospace;font-size:20px;font-weight:600;color:#221F1A">${esc(sel.des)}</span>` +
+    (sel.val ? `<span style="font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:600;color:#C2410C">${esc(sel.val)}</span>` : '') +
+    `</div>` +
     `<div style="font-size:11.5px;color:#6E6A60;margin-top:3px;word-break:break-word;line-height:1.35">${esc(sel.pkg || '—')}</div>` +
     `<div style="font-size:10.5px;color:#A19B8E;font-family:'IBM Plex Mono',monospace;margin-top:5px">${esc(sheetLabel(si))}</div>` +
     (diffNote ? `<div style="margin-top:6px;font-size:11px;color:#9A6700;font-family:'IBM Plex Mono',monospace;white-space:pre-line">${esc(diffNote)}</div>` : '') +
@@ -937,7 +1019,23 @@ function renderInspector() {
       `<span style="display:block;font-family:'IBM Plex Mono',monospace;font-size:10px;color:#4338CA;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(pn.net)}</span></span></div>`
     ).join('') + `</div>`;
   $('ins-x').addEventListener('click', closeSel);
-  [...ins.querySelectorAll('.pinrow')].forEach(el => el.addEventListener('click', () => { const k = pins[+el.dataset.i].key; if (k) togglePin(k); }));
+  [...ins.querySelectorAll('.pinrow')].forEach(el => {
+    const k = pins[+el.dataset.i].key;
+    el.addEventListener('click', () => { if (k) togglePin(k); });
+    el.addEventListener('mouseenter', () => previewNet(k));   // highlight net in main view
+    el.addEventListener('mouseleave', clearPreview);
+  });
+  if (si === cur) positionInspectorNear(sel.des);   // float next to the part
+  // drag the floating card by its header
+  const head = $('ins-head');
+  head.addEventListener('pointerdown', e => {
+    if (e.target.closest('#ins-x')) return;
+    const st = { x: e.clientX, y: e.clientY, l: ins.offsetLeft, t: ins.offsetTop };
+    head.setPointerCapture(e.pointerId);
+    const mv = ev => { ins.style.left = (st.l + ev.clientX - st.x) + 'px'; ins.style.top = (st.t + ev.clientY - st.y) + 'px'; ins.style.right = 'auto'; ins.style.bottom = 'auto'; };
+    const up = () => { head.removeEventListener('pointermove', mv); head.removeEventListener('pointerup', up); };
+    head.addEventListener('pointermove', mv); head.addEventListener('pointerup', up);
+  });
 }
 function renderBom() {
   const bom = $('bom');

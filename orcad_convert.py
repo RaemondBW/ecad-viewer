@@ -286,6 +286,45 @@ def load_dsn(path):
     return design
 
 
+def parse_bom(path):
+    """Parse an OrCAD 'Bill Of Materials' text export into {designator: value}.
+    Columns are tab-separated (Item, Quantity, Reference, Part); the Reference
+    list wraps onto indented continuation lines, with Part on the item's first
+    line. This is the only place the design records a value per reference
+    designator (the schematic streams don't carry it)."""
+    try:
+        lines = Path(path).read_text(encoding="latin1").split("\n")
+    except OSError:
+        return {}
+    hi = next((i for i, l in enumerate(lines)
+               if l.startswith("Item") and "Part" in l), None)
+    if hi is None:
+        return {}
+    out = {}
+
+    def flush(refs, part):
+        if part is None:
+            return
+        for r in re.split(r"[,\s]+", refs):
+            r = r.strip()
+            if r:
+                out[r] = part
+
+    refs, part = "", None
+    for l in lines[hi + 2:]:
+        if not l.strip():
+            continue
+        if re.match(r"^\d+\t", l):
+            flush(refs, part)
+            f = l.split("\t")
+            part = f[-1].strip()
+            refs = f[2].strip() if len(f) > 3 else ""
+        elif part is not None:
+            refs += " " + l.strip()
+    flush(refs, part)
+    return out
+
+
 def _net_key(pageid, nid, names):
     """Stable net key. Named nets merge across pages by name; unnamed nets are
     page-local synthetic ids."""
