@@ -222,10 +222,11 @@ def generate_linked(dsn_path, brd_path, out_dir, bom_path=None,
     xnets, ns, nl = build_correspondence(dsn_path, brd_path, model)
     payload = [{"name": x["name"], "sch": x["sch"], "reps": x["reps"], "bbox": x["bbox"]}
                for x in xnets]
+    lay_refs = sorted({pt["ref"] for pt in model["parts"]})
     brd_viewer.generate(brd_path, out / pcb_name, bom_path,
                         xprobe={"xnets": payload, "companion": sch_name}, model=model)
     orcad_viewer.generate(dsn_path, out / sch_name,
-                          xprobe={"xnets": payload, "companion": pcb_name})
+                          xprobe={"xnets": payload, "companion": pcb_name, "layoutRefs": lay_refs})
     ex = sum(1 for x in xnets if x["exact"])
     print(f"linked {len(payload)} nets ({ex} exact-name, {len(payload) - ex} fuzzy) "
           f"of {ns} schematic / {nl} layout nets")

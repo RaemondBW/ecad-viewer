@@ -165,6 +165,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#E9E7E1;font-family:'I
 .hlr{fill:#8FD0FF}
 /* iframe-embed mode: hide chrome, let the net fill the frame */
 body.modal #bar,body.modal #layers,body.modal #legend{display:none!important}
+body.modal #stage{inset:0!important}
 /* cross-probe modal */
 #xmodal{display:none;position:fixed;inset:0;background:rgba(20,18,14,.55);z-index:20;align-items:center;justify-content:center}
 #xbox{background:#12100C;border:1px solid #3a352b;border-radius:12px;width:min(760px,86vw);height:min(620px,82vh);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.5)}
@@ -341,10 +342,11 @@ const rootToXnet=new Map(), xnetRoots=[];
     for(const r of (xn.reps||[])){ const rt=_find(nqk(r[0],r[1])+'@'+r[2]); roots.add(rt); if(!rootToXnet.has(rt)) rootToXnet.set(rt,i); }
     xnetRoots[i]=roots; });
 })();
-function zoomToBox(b,m){ if(!b) return; const rr=svg.getBoundingClientRect(); m=m||0.3;
-  // keep a minimum context window so a tiny fragment doesn't zoom to just its pads
-  const bw=Math.max((b[2]-b[0]),90000), bh=Math.max((b[3]-b[1]),90000);
-  view.k=Math.min(rr.width/(bw*(1+m)), rr.height/(bh*(1+m)), baseK*12);
+function zoomToBox(b,m,minCtx){ if(!b) return; const rr=svg.getBoundingClientRect(); m=(m==null?0.3:m);
+  // minCtx: minimum context window so a tiny target doesn't zoom past all context
+  const mc=(minCtx==null?90000:minCtx);
+  const bw=Math.max((b[2]-b[0]),mc), bh=Math.max((b[3]-b[1]),mc);
+  view.k=Math.min(rr.width/(bw*(1+m)), rr.height/(bh*(1+m)), baseK*30);
   view.x=rr.width/2-((b[0]+b[2])/2)*view.k; view.y=rr.height/2-flipY((b[1]+b[3])/2)*view.k; applyView(); }
 function xnetOfNet(net){ if(!net) return null; for(const r of net) if(rootToXnet.has(r)) return rootToXnet.get(r); return null; }
 function refBox(ref){ const p=M.parts.find(q=>q.ref===ref); if(!p||!p.pads.length) return null;
@@ -440,7 +442,7 @@ function applyParams(){
     const p=M.parts.find(q=>q.ref===ref);        // show only the layer the part sits on
     if(p){ const keep=p.side?_LN[_LN.length-1]:_LN[0];
       hiddenLayers.clear(); _LN.forEach(l=>{ if(l!==keep) hiddenLayers.add(l); }); renderLayers(); }
-    render(); zoomToBox(refBox(ref),1.2);
+    render(); zoomToBox(refBox(ref),0.25,12000);   // close in on the part
   }
 }
 if(QP.get('xnet')!==null || QP.get('ref')){

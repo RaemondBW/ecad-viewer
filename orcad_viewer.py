@@ -559,10 +559,13 @@ const $ = id => document.getElementById(id);
 const XQP = new URLSearchParams(location.search), XMODAL = XQP.get('modal') === '1';
 const schToXnet = new Map();
 if (XP && XP.xnets) XP.xnets.forEach((xn, i) => { if (xn.sch != null && !schToXnet.has(xn.sch)) schToXnet.set(xn.sch, i); });
+const layoutRefs = new Set((XP && XP.layoutRefs) || []);
 // a "Layout" section (iframe preview + open-full link) for the details card.
 // kind: 'ref' (component) | 'xnet' (net index); returns '' when no layout link.
 function layoutPreview(kind, id) {
   if (!XP || !XP.companion || id == null || id === '') return '';
+  if (kind === 'ref' && XP.layoutRefs && !layoutRefs.has(id))
+    return `<div style="padding:12px 16px;color:#A19B8E;font-size:12px;border-top:1px solid #EAE6DA">Not placed in this layout.</div>`;
   const q = kind + '=' + encodeURIComponent(id);
   return `<div style="padding:8px 8px 12px;border-top:1px solid #EAE6DA">` +
     `<div style="display:flex;align-items:center;justify-content:space-between;padding:2px 8px 6px">` +
@@ -571,7 +574,7 @@ function layoutPreview(kind, id) {
     `<iframe src="${XP.companion}?${q}&modal=1" loading="lazy" style="width:100%;height:190px;border:1px solid #E0DCD1;border-radius:8px;background:#0e0c08"></iframe></div>`;
 }
 
-let cur = 0, pinNets = [], selDes = null, selNet = null, q = '', searchFocus = false;
+let cur = 0, pinNets = [], selDes = null, selNet = null, cardPinned = false, q = '', searchFocus = false;
 let bomOpen = false, bomQ = '', dark = false, collapsed = {}, sheetsOpen = true, ready = false;
 let view = { x: 0, y: 0, k: 1 };
 let netSheets, netNames, bomAll, partCount, thumbs, dctx;
@@ -586,7 +589,7 @@ let svgEl, sceneEl, miniEl, vpEl, tipEl, infoEl, drag = null, miniDrag = false, 
 let hoverDes = null, hoverTimer = 0, overDes = null, closeTimer = 0;
 // close the hover card shortly after the cursor leaves both the part and the
 // card; entering the card cancels the pending close so it stays reachable
-function scheduleCardClose() { clearTimeout(closeTimer); closeTimer = setTimeout(() => { if (selDes) closeSel(); }, 260); }
+function scheduleCardClose() { if (cardPinned) return; clearTimeout(closeTimer); closeTimer = setTimeout(() => { if (selDes && !cardPinned) closeSel(); }, 260); }
 function cancelCardClose() { clearTimeout(closeTimer); }
 
 function netName(k) { return netNames.get(k) || k; }
@@ -685,11 +688,11 @@ function bindCanvas() {
     if (des !== overDes) {
       if (des) {                       // entered a part
         cancelCardClose();
-        if (des !== selDes) { hoverDes = des; clearTimeout(hoverTimer);
-          hoverTimer = setTimeout(() => { if (hoverDes === des) selectPart(des); }, 90); }
+        if (des !== selDes && !cardPinned) { hoverDes = des; clearTimeout(hoverTimer);
+          hoverTimer = setTimeout(() => { if (hoverDes === des && !cardPinned) selectPart(des); }, 90); }
       } else {                         // left a part onto empty canvas
         hoverDes = null; clearTimeout(hoverTimer);
-        if (selDes) scheduleCardClose();
+        if (selDes && !cardPinned) scheduleCardClose();
       }
       overDes = des;
     }
@@ -709,9 +712,9 @@ function bindCanvas() {
   el.addEventListener('click', e => {
     if (suppressClick) { suppressClick = false; return; }
     const n = e.target.closest('[data-net]');
-    if (n) { const k = n.dataset.net; togglePin(k); if (isPinned(k)) selectNet(k); else if (selNet === k) closeSel(); return; }
+    if (n) { const k = n.dataset.net; togglePin(k); if (isPinned(k)) { cardPinned = true; selectNet(k); } else if (selNet === k) closeSel(); return; }
     const c = e.target.closest('.comp[data-des]');
-    if (c) { selectPart(c.dataset.des); return; }
+    if (c) { cardPinned = true; selectPart(c.dataset.des); return; }   // click pins the card open
     if (selDes || selNet) closeSel();
   });
   el.addEventListener('wheel', e => {
@@ -806,7 +809,7 @@ function clearPins() { pinNets = []; applyPins(); renderStatus(); renderSidebar(
 /* ---------- selection / navigation ---------- */
 function selectPart(des) { selDes = des; selNet = null; updateSelMark(); renderInspector(); }
 function selectNet(k) { selNet = k; selDes = null; updateSelMark(); renderInspector(); }
-function closeSel() { selDes = null; selNet = null; updateSelMark(); renderInspector(); }
+function closeSel() { selDes = null; selNet = null; cardPinned = false; updateSelMark(); renderInspector(); }
 function updateSelMark() {
   sceneEl.querySelectorAll('.comp.sel').forEach(el => el.classList.remove('sel'));
   if (selDes) {
@@ -1056,7 +1059,7 @@ function renderInspector() {
     `<div id="ins-head" style="display:flex;align-items:center;justify-content:space-between;padding:12px 10px 6px 16px;cursor:move;user-select:none">` +
     `<span style="font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#8B8578">Part</span>` +
     `<button id="ins-x" class="iconx" style="cursor:pointer">&times;</button></div>` +
-    layoutPreview('ref', sel.des) +
+    (cardPinned ? layoutPreview('ref', sel.des) : '') +
     `<div style="padding:0 16px 12px;border-bottom:1px solid #EAE6DA">` +
     `<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">` +
     `<span style="font-family:'IBM Plex Mono',monospace;font-size:20px;font-weight:600;color:#221F1A">${esc(sel.des)}</span>` +
