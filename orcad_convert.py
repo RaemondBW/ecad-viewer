@@ -262,7 +262,10 @@ def load_dsn(path):
         if gl:
             fxs = [c for r in gl for c in (r[0], r[2])]
             fys = [c for r in gl for c in (r[1], r[3])]
-            bound = (min(fxs) - 200, min(fys) - 200, max(fxs) + 200, max(fys) + 200)
+            # snug to the drawn frame — real component pins sit inside it, so a
+            # tight margin rejects far-off false records (e.g. a stray pin at
+            # x=1) that would otherwise inflate a part's box.
+            bound = (min(fxs) - 25, min(fys) - 25, max(fxs) + 25, max(fys) + 25)
         elif wires:
             wxs = [c for w in wires for c in (w[1], w[3])]
             wys = [c for w in wires for c in (w[2], w[4])]
@@ -359,6 +362,8 @@ def build_sheets(design):
         out_parts = []
         for inst in insts:
             pins = inst["pins"]
+            if _looks_passive(inst["package"], inst["designator"]) and len(pins) != 2:
+                pins = _two_terminals(pins, inst["package"], pt)
             sym = _classify(inst["package"], inst["designator"], len(pins))
             # pin names for IC-style (box) parts, matched geometrically to the
             # cached symbol definition
@@ -463,15 +468,43 @@ def build_sheets(design):
             heading = heading.replace("\r\n", " ").replace("\n", " ")
         fx, fy, fX, fY = s["frame"]
         size = "B" if (fX - fx) > 1400 else "A"
+        # Title cell shows the page's descriptive heading (the largest comment,
+        # e.g. "FPGA Top Level"); fall back to the sheet name if there is none.
+        title = heading or s["page"] or s["view"]
         s["tb"] = {
             "ox": fX - tb_geom["w"], "oy": fY - tb_geom["h"],
-            "title": s["page"] or s["view"],   # short sheet name in the Title cell
+            "title": title, "sheet_name": s["page"] or s["view"],
             "heading": heading,
             "size": size, "rev": "", "date": "",
             "n": i + 1, "total": total, "company": "Cadence",
         }
 
     return {"name": "", "sheets": sheets, "titleblock": tb_geom}
+
+
+def _looks_passive(pkg, des):
+    """True for standard 2-terminal passive packages (res/cap/ind/diode)."""
+    p = (pkg or "").upper()
+    if p:
+        return p.startswith(("RES", "CAP", "CAPP", "IND", "DIO", "LED")) or "CAPPOL" in p
+    return (des or "").upper()[:1] in ("R", "C", "L", "D")
+
+
+def _two_terminals(pins, pkg, point_nets):
+    """Coerce a 2-terminal passive to exactly two lead points. With extra pins
+    (a stray false record), keep the two lowest indices; with only one, place
+    the missing lead a standard span away along the package orientation, on the
+    side not already sitting on a wire. Returns [(idx,x,y), (idx,x,y)]."""
+    if len(pins) == 2 or not pins:
+        return pins
+    if len(pins) > 2:
+        return sorted(pins)[:2]                 # (idx,x,y) sorted → lowest idx
+    idx, x, y = pins[0]
+    span = 40
+    cand = [(x + span, y), (x - span, y)] if (pkg or "").upper().endswith("H") \
+        else [(x, y + span), (x, y - span)]
+    tx, ty = next(((cx, cy) for cx, cy in cand if (cx, cy) not in point_nets), cand[0])
+    return [pins[0], (1 if idx != 1 else 2, tx, ty)]
 
 
 def _classify(pkg, des, npins):

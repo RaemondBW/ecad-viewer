@@ -180,19 +180,19 @@ html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#E9E7E1;
 .sch-scene .flag.fill{fill:var(--p-comp)}
 .sch-scene .flag.arrow{fill:var(--p-note);stroke:var(--p-note)}
 .sch-scene .flabel{fill:var(--p-net);font-family:'IBM Plex Mono',monospace}
-.sch-scene .flagg.hot .flag{stroke:var(--p-hot)}
-.sch-scene .flagg.hot .flag.fill{fill:var(--p-hot)}
-.sch-scene .flagg.hot .flabel{fill:var(--p-hot);font-weight:700}
+.sch-scene .flagg.hot .flag{stroke:var(--hot,var(--p-hot))}
+.sch-scene .flagg.hot .flag.fill{fill:var(--hot,var(--p-hot))}
+.sch-scene .flagg.hot .flabel{fill:var(--hot,var(--p-hot));font-weight:700}
 .sch-scene .tb-cell{fill:var(--p-page);stroke:var(--p-ink);stroke-width:1;vector-effect:non-scaling-stroke}
 .sch-scene .tb-lbl{fill:var(--p-pinnum);font-family:'IBM Plex Sans',sans-serif;dominant-baseline:central}
 .sch-scene .tb-val{fill:var(--p-ink);font-family:'IBM Plex Sans',sans-serif;dominant-baseline:central}
 .sch-scene .tb-title{fill:var(--p-ink);font-family:'IBM Plex Sans',sans-serif;font-weight:600}
 .sch-scene .dim{opacity:.15}
-.sch-scene .wire.hot{stroke:var(--p-hot);stroke-width:2.2}
+.sch-scene .wire.hot{stroke:var(--hot,var(--p-hot));stroke-width:2.2}
 .sch-scene .wire.bus.hot{stroke-width:3.6}
-.sch-scene .pin.hot{fill:var(--p-hot)}
-.sch-scene .nlabel.hot{fill:var(--p-hot);font-weight:700}
-.sch-scene .comp.hot rect{stroke:var(--p-hot);stroke-width:2}
+.sch-scene .pin.hot{fill:var(--hot,var(--p-hot))}
+.sch-scene .nlabel.hot{fill:var(--hot,var(--p-hot));font-weight:700}
+.sch-scene .comp.hot rect{stroke:var(--hot,var(--p-hot));stroke-width:2}
 .sch-scene .comp.sel rect{stroke:var(--p-hot);stroke-width:2}
 .sch-scene .comp.sel .sym{stroke:var(--p-hot)}
 .sch-scene .comp.sel .sym.fill{fill:var(--p-hot)}
@@ -240,7 +240,7 @@ html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#E9E7E1;
   <div style="display:flex;flex:1;min-height:0;position:relative">
     <div id="sidebar" style="width:252px;flex-shrink:0;border-right:1px solid #E0DCD1;background:#FBFAF7;overflow-y:auto;padding:2px 0 12px"></div>
     <div id="stage" class="sch-stage" style="flex:1;position:relative;overflow:hidden;min-width:0">
-      <svg id="svg" class="sch-scene" style="width:100%;height:100%;display:block;cursor:grab;touch-action:none"><g id="scene"></g></svg>
+      <svg id="svg" class="sch-scene" style="width:100%;height:100%;display:block;cursor:default;touch-action:none;user-select:none;-webkit-user-select:none"><g id="scene"></g></svg>
       <div id="status" style="position:absolute;left:12px;bottom:12px;z-index:10;max-width:60%"></div>
       <div id="minimap" style="position:absolute;right:12px;bottom:12px;background:rgba(251,250,247,0.92);border:1px solid #E0DCD1;border-radius:10px;padding:5px;box-shadow:0 8px 20px rgba(24,20,10,0.10)">
         <svg id="mini" class="sch-scene sch-mini" style="display:block;width:188px;height:126px;touch-action:none"></svg>
@@ -295,9 +295,9 @@ html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#E9E7E1;
     for (const t of geom.labels)
       s += `<text class="tb-lbl" x="${ox + t.x}" y="${oy + t.y}" font-size="9">${esc(t.s)}</text>`;
     const title = ('' + tb.title);
-    const tfs = Math.max(8, Math.min(15, 185 / Math.max(title.length * 0.6, 1)));
-    s += `<text class="tb-title" x="${ox + 100}" y="${oy + 40}" font-size="${tfs.toFixed(1)}" text-anchor="middle">${esc(title)}</text>`;
-    s += `<text class="tb-val" x="${ox + 280}" y="${oy + 40}" font-size="11" text-anchor="middle">${esc(tb.company)}</text>`;
+    const tfs = Math.max(6, Math.min(14, 336 / Math.max(title.length * 0.6, 1)));
+    s += `<text class="tb-title" x="${ox + 180}" y="${oy + 34}" font-size="${tfs.toFixed(1)}" text-anchor="middle">${esc(title)}</text>`;
+    s += `<text class="tb-val" x="${ox + 180}" y="${oy + 64}" font-size="9" text-anchor="middle">${esc(tb.company)}</text>`;
     s += `<text class="tb-val" x="${ox + 40}" y="${oy + 108}" font-size="10">${esc(tb.size)}</text>`;
     if (tb.rev) s += `<text class="tb-val" x="${ox + 190}" y="${oy + 108}" font-size="10">${esc(tb.rev)}</text>`;
     if (tb.date) s += `<text class="tb-val" x="${ox + 40}" y="${oy + 130}" font-size="9">${esc(tb.date)}</text>`;
@@ -520,10 +520,17 @@ const M = __MODEL__;
 const R = window.SchRender, esc = R.esc;
 const $ = id => document.getElementById(id);
 
-let cur = 0, pinned = null, selDes = null, q = '', searchFocus = false;
+let cur = 0, pinNets = [], selDes = null, q = '', searchFocus = false;
 let bomOpen = false, bomQ = '', dark = false, collapsed = {}, sheetsOpen = true, ready = false;
 let view = { x: 0, y: 0, k: 1 };
 let netSheets, netNames, bomAll, partCount, thumbs, dctx;
+// distinct highlight colors for multi-net pinning (readable on light + dark)
+const PALETTE = ['#EA580C', '#2563EB', '#16A34A', '#9333EA', '#DB2777', '#0891B2', '#CA8A04', '#DC2626'];
+function nextColor() {
+  const used = new Set(pinNets.map(p => p.color));
+  return PALETTE.find(c => !used.has(c)) || PALETTE[pinNets.length % PALETTE.length];
+}
+function isPinned(k) { return pinNets.some(p => p.key === k); }
 let svgEl, sceneEl, miniEl, vpEl, tipEl, infoEl, drag = null, miniDrag = false, suppressClick = false;
 
 function netName(k) { return netNames.get(k) || k; }
@@ -564,7 +571,7 @@ function renderScene() {
   sceneEl.innerHTML = R.sceneSVG(s, M, dctx);
   applyView();
   renderStatus();
-  if (pinned) hiNet(pinned);
+  applyPins();
   updateSelMark();
   renderMini();
 }
@@ -598,7 +605,7 @@ function bindCanvas() {
   el.addEventListener('pointerdown', e => {
     if (e.target.closest('[data-net],[data-des]')) return;
     drag = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y, moved: false };
-    el.style.cursor = 'grabbing'; el.setPointerCapture(e.pointerId);
+    el.setPointerCapture(e.pointerId);
   });
   el.addEventListener('pointermove', e => {
     if (drag) {
@@ -612,22 +619,21 @@ function bindCanvas() {
   });
   el.addEventListener('pointerup', () => {
     if (drag && drag.moved) suppressClick = true;
-    drag = null; el.style.cursor = 'grab';
+    drag = null;
   });
   el.addEventListener('pointerleave', hideTip);
   el.addEventListener('pointerover', e => {
-    const n = e.target.closest('[data-net]'); if (n && !pinned) hiNet(n.dataset.net);
+    const n = e.target.closest('[data-net]'); if (n && !pinNets.length) hoverNet(n.dataset.net);
   });
   el.addEventListener('pointerout', e => {
-    const n = e.target.closest('[data-net]'); if (n && !pinned) clearHi();
+    const n = e.target.closest('[data-net]'); if (n && !pinNets.length) applyPins();
   });
   el.addEventListener('click', e => {
     if (suppressClick) { suppressClick = false; return; }
     const n = e.target.closest('[data-net]');
-    if (n) { setPinned(pinned === n.dataset.net ? null : n.dataset.net); return; }
+    if (n) { togglePin(n.dataset.net); return; }
     const c = e.target.closest('.comp[data-des]');
     if (c) { selectPart(c.dataset.des); return; }
-    if (pinned) setPinned(null);
     if (selDes) closeSel();
   });
   el.addEventListener('wheel', e => {
@@ -671,12 +677,25 @@ function bindMini() {
 }
 
 /* ---------- highlight / info ---------- */
-function hiNet(k) {
+// paint every pinned net in its own colour (via the per-element --hot var);
+// dim everything else while any net is pinned
+function applyPins() {
+  const map = new Map(pinNets.map(p => [p.key, p.color]));
+  const any = pinNets.length > 0;
+  sceneEl.querySelectorAll('[data-net]').forEach(el => {
+    const c = map.get(el.dataset.net);
+    if (c) { el.classList.add('hot'); el.classList.remove('dim'); el.style.setProperty('--hot', c); }
+    else { el.classList.remove('hot'); el.style.removeProperty('--hot'); el.classList.toggle('dim', any); }
+  });
+  if (!any) setDefaultInfo();
+}
+// transient single-net highlight on hover (only when nothing is pinned)
+function hoverNet(k) {
   const els = [...sceneEl.querySelectorAll('[data-net]')];
   const here = els.some(el => el.dataset.net === k && k !== '');
   els.forEach(el => {
     const on = el.dataset.net === k && k !== '';
-    el.classList.toggle('hot', on);
+    el.classList.toggle('hot', on); el.style.removeProperty('--hot');
     el.classList.toggle('dim', here && !on);
   });
   if (infoEl) {
@@ -688,16 +707,23 @@ function hiNet(k) {
       : `${name} — not on this page${also}`;
   }
 }
-function clearHi() {
-  sceneEl.querySelectorAll('.hot,.dim').forEach(el => el.classList.remove('hot', 'dim'));
-  setDefaultInfo();
-}
 function setDefaultInfo() {
   if (!infoEl || !ready) return;
   const s = M.sheets[cur];
   infoEl.textContent = `${s.parts.length} parts · ${s.wires.length} wires · ${Object.keys(s.nets).length} nets`;
 }
-function setPinned(k) { pinned = k; renderStatus(); renderSidebar(); k ? hiNet(k) : clearHi(); }
+function togglePin(k) {
+  if (!k) return;
+  const i = pinNets.findIndex(p => p.key === k);
+  if (i >= 0) pinNets.splice(i, 1); else pinNets.push({ key: k, color: nextColor() });
+  applyPins(); renderStatus(); renderSidebar();
+}
+function pinNet(k) {   // ensure a net is pinned (used by search / pin-row clicks)
+  if (k && !isPinned(k)) pinNets.push({ key: k, color: nextColor() });
+  applyPins(); renderStatus(); renderSidebar();
+}
+function removePinAt(i) { pinNets.splice(i, 1); applyPins(); renderStatus(); renderSidebar(); }
+function clearPins() { pinNets = []; applyPins(); renderStatus(); renderSidebar(); }
 
 /* ---------- selection / navigation ---------- */
 function selectPart(des) { selDes = des; updateSelMark(); renderInspector(); }
@@ -737,7 +763,7 @@ function centerPart(des) {
 function goNet(k, pages) {
   q = ''; searchFocus = false; $('tb-search').value = ''; renderDrop();
   if (!pages.includes(cur) && pages.length) { cur = pages[0]; selDes = null; renderScene(); fit(); updChrome(); renderInspector(); }
-  setPinned(k);
+  pinNet(k);
 }
 
 /* ---------- tooltip ---------- */
@@ -814,7 +840,6 @@ function renderSidebar() {
   const bar = $('sidebar');
   const byView = new Map();
   M.sheets.forEach((s, i) => { if (!byView.has(s.view)) byView.set(s.view, []); byView.get(s.view).push(i); });
-  const pinSet = pinned ? netSheets.get(pinned) : null;
   let h = `<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 10px 6px 16px">` +
     `<span style="font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#8B8578">Sheets</span>` +
     `<button id="sb-collapse" class="iconx" title="Collapse panel" style="font-size:14px">&#171;</button></div>`;
@@ -827,15 +852,17 @@ function renderSidebar() {
     if (open) {
       for (const i of idxs) {
         const s = M.sheets[i], active = i === cur;
-        const hasNet = !!(pinSet && pinSet.has(i) && !active);
+        // one dot per pinned net present on this page, in that net's colour
+        const dots = pinNets.filter(p => (netSheets.get(p.key) || new Set()).has(i))
+          .map(p => `<span title="${esc(netName(p.key))}" style="width:6px;height:6px;border-radius:50%;background:${p.color};display:inline-block;flex-shrink:0"></span>`).join('');
         const th = thumbs[i] ? `background-image:url(&quot;${thumbs[i]}&quot;);` : '';
         h += `<div class="pgrow${active ? ' active' : ''}" data-i="${i}">` +
           `<div style="width:62px;height:42px;background:#FFFFFF;${th}background-size:contain;background-repeat:no-repeat;background-position:center;border:1px solid ${active ? '#C9A97F' : '#E4E0D3'};border-radius:4px;flex-shrink:0"></div>` +
           `<div style="min-width:0;flex:1">` +
           `<div style="font-size:12px;font-weight:500;color:#221F1A;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.page || s.view)}</div>` +
-          `<div style="display:flex;align-items:center;gap:6px;margin-top:1px">` +
+          `<div style="display:flex;align-items:center;gap:5px;margin-top:1px">` +
           `<span style="font-size:10px;color:#A19B8E;font-family:'IBM Plex Mono',monospace">${s.parts.length} parts</span>` +
-          (hasNet ? `<span style="width:6px;height:6px;border-radius:50%;background:#EA580C;display:inline-block;flex-shrink:0" title="pinned net on this page"></span>` : '') +
+          dots +
           `</div></div></div>`;
       }
     }
@@ -847,28 +874,36 @@ function renderSidebar() {
 }
 function renderStatus() {
   const st = $('status'); infoEl = null;
-  if (!pinned) {
+  if (!pinNets.length) {
     st.innerHTML = `<div style="background:rgba(251,250,247,0.92);border:1px solid #E0DCD1;border-radius:8px;padding:5px 9px;font-size:11px;font-family:'IBM Plex Mono',monospace;color:#6E6A60;pointer-events:none;width:fit-content;white-space:nowrap"><span id="info"></span></div>`;
     infoEl = $('info'); setDefaultInfo(); return;
   }
   const s = M.sheets[cur];
-  const segs = s.wires.filter(w => w[4] === pinned).length;
-  const onPage = segs > 0 || (s.labels || []).some(l => l.key === pinned) || (s.connectors || []).some(f => f.key === pinned);
-  const meta = onPage ? segs + ' segments · this page' : 'not on this page';
-  const pages = [...(netSheets.get(pinned) || [])].filter(i => i !== cur);
-  let chips = '';
-  if (pages.length) {
-    chips = `<div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center"><span style="font-size:10px;color:#8B8578;margin-right:2px">also on</span>` +
-      pages.map(i => `<button class="chip" data-i="${i}">${esc(sheetLabel(i))}</button>`).join('') + `</div>`;
-  }
-  st.innerHTML = `<div style="background:rgba(251,250,247,0.96);border:1px solid #E0DCD1;border-radius:10px;padding:8px 10px;box-shadow:0 8px 20px rgba(24,20,10,0.10);display:flex;flex-direction:column;gap:6px;max-width:560px">` +
-    `<div style="display:flex;align-items:center;gap:8px">` +
-    `<span style="width:8px;height:8px;border-radius:50%;background:#EA580C;flex-shrink:0"></span>` +
-    `<span style="font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:#221F1A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(netName(pinned))}</span>` +
-    `<span style="font-size:10.5px;color:#8B8578;font-family:'IBM Plex Mono',monospace;white-space:nowrap">${meta}</span>` +
-    `<button id="pin-x" title="Clear pinned net" style="margin-left:auto;border:none;background:transparent;cursor:pointer;color:#8B8578;font-size:14px;line-height:1;padding:0 2px">&times;</button></div>` +
-    chips + `</div>`;
-  $('pin-x').addEventListener('click', () => setPinned(null));
+  let blocks = '';
+  pinNets.forEach((p, pi) => {
+    const segs = s.wires.filter(w => w[4] === p.key).length;
+    const onPage = segs > 0 || (s.labels || []).some(l => l.key === p.key) || (s.connectors || []).some(f => f.key === p.key);
+    const meta = onPage ? segs + ' segments · this page' : 'not on this page';
+    // every page carrying this net, in fixed sheet order (incl. current, marked)
+    const allPages = [...(netSheets.get(p.key) || [])].sort((a, b) => a - b);
+    const chips = allPages.map(i => {
+      const isCur = i === cur;
+      const style = isCur
+        ? `background:${p.color};border:1px solid ${p.color};color:#FFFFFF;font-weight:600`
+        : `background:#FBF1E8;border:1px solid #E8CDB6;color:#B4530F`;
+      return `<button class="chip" data-i="${i}" style="font-family:'IBM Plex Mono',monospace;font-size:10px;padding:2px 8px;border-radius:999px;cursor:pointer;${style}">${esc(sheetLabel(i))}</button>`;
+    }).join('');
+    blocks += `<div style="display:flex;flex-direction:column;gap:4px">` +
+      `<div style="display:flex;align-items:center;gap:8px">` +
+      `<span style="width:9px;height:9px;border-radius:50%;background:${p.color};flex-shrink:0"></span>` +
+      `<span style="font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:#221F1A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(netName(p.key))}</span>` +
+      `<span style="font-size:10.5px;color:#8B8578;font-family:'IBM Plex Mono',monospace;white-space:nowrap">${meta}</span>` +
+      `<button class="pin-x" data-p="${pi}" title="Remove net" style="margin-left:auto;border:none;background:transparent;cursor:pointer;color:#8B8578;font-size:14px;line-height:1;padding:0 2px">&times;</button></div>` +
+      (chips ? `<div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center"><span style="font-size:10px;color:#8B8578;margin-right:2px">pages</span>${chips}</div>` : '') +
+      `</div>`;
+  });
+  st.innerHTML = `<div style="background:rgba(251,250,247,0.96);border:1px solid #E0DCD1;border-radius:10px;padding:8px 10px;box-shadow:0 8px 20px rgba(24,20,10,0.10);display:flex;flex-direction:column;gap:9px;max-width:600px;max-height:46vh;overflow-y:auto">${blocks}</div>`;
+  [...st.querySelectorAll('.pin-x')].forEach(el => el.addEventListener('click', () => removePinAt(+el.dataset.p)));
   [...st.querySelectorAll('.chip')].forEach(el => el.addEventListener('click', () => selectSheet(+el.dataset.i)));
 }
 function renderInspector() {
@@ -902,7 +937,7 @@ function renderInspector() {
       `<span style="display:block;font-family:'IBM Plex Mono',monospace;font-size:10px;color:#4338CA;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(pn.net)}</span></span></div>`
     ).join('') + `</div>`;
   $('ins-x').addEventListener('click', closeSel);
-  [...ins.querySelectorAll('.pinrow')].forEach(el => el.addEventListener('click', () => { const k = pins[+el.dataset.i].key; if (k) setPinned(k); }));
+  [...ins.querySelectorAll('.pinrow')].forEach(el => el.addEventListener('click', () => { const k = pins[+el.dataset.i].key; if (k) togglePin(k); }));
 }
 function renderBom() {
   const bom = $('bom');
@@ -969,7 +1004,7 @@ function bindToolbar() {
     if (e.key === 'Escape') {
       if (bomOpen) { bomOpen = false; renderBom(); }
       else if (selDes) closeSel();
-      else if (pinned) setPinned(null);
+      else if (pinNets.length) clearPins();
     }
   });
   window.addEventListener('resize', () => { updateVp(); });
