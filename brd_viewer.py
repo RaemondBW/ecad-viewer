@@ -303,15 +303,16 @@ const _padNets=[], _padMain=[];   // per pad: Set of net roots, and its dominant
 })();
 function traceRoot(i){ const C=M.copper; return _find(nqk(C[i],C[i+1])+'@'+C[i+4]); }
 function viaRoot(x,y){ return _find(nqk(x,y)+'@'+_L0); }
-let pinnedNet=null, hoverNet=null;   // each: a Set of net roots, or null
-let refHL=null;                      // a highlighted component refdes, or null
+let pinnedNet=null, hoverNet=null;   // net highlight: each a Set of net roots, or null
+let pinnedRef=null, hoverRef=null;   // part highlight: a component refdes, or null
 function activeNet(){ return pinnedNet||hoverNet; }
 function inNet(net,r){ return net && r!=null && net.has(r); }
 function padInNet(net,pn){ if(!net||!pn) return false; for(const r of pn) if(net.has(r)) return true; return false; }
 function updateHighlight(){
-  const net=activeNet();
-  scene.classList.toggle('dim', net!=null || refHL!=null);
-  if(net==null && refHL==null){ hlg.innerHTML=''; return; }
+  const aref=pinnedRef||hoverRef;    // a hovered/clicked part's pads take priority over the net
+  const net=aref?null:activeNet();
+  scene.classList.toggle('dim', net!=null || aref!=null);
+  if(net==null && aref==null){ hlg.innerHTML=''; return; }
   const C=M.copper; let h=''; const byW={};
   if(net) for(let i=0;i<C.length;i+=6){ if(hiddenLayers.has(C[i+4])||!inNet(net,traceRoot(i))) continue;
     const w=Math.max(C[i+5],minW); (byW[w]=byW[w]||[]).push(`M${C[i]} ${flipY(C[i+1])}L${C[i+2]} ${flipY(C[i+3])}`); }
@@ -320,7 +321,7 @@ function updateHighlight(){
   if(net) for(let i=0;i<V.length;i+=3) if(inNet(net,viaRoot(V[i],V[i+1]))) h+=`<circle class="hlv" cx="${V[i]}" cy="${flipY(V[i+1])}" r="${V[i+2]}"/>`;
   let gi=0;
   for(const pt of M.parts){ const hid=hiddenLayers.has(pt.side?_LN[_LN.length-1]:_LN[0]);
-    const isRef=refHL!=null && pt.ref===refHL;
+    const isRef=aref!=null && pt.ref===aref;
     for(const pd of pt.pads){ const pn=_padNets[gi++]; if(hid) continue;
       if(!(isRef || padInNet(net,pn))) continue;
       const cls=isRef?'hlp hlr':'hlp', w=pd[2]-pd[0], hh=pd[3]-pd[1];   // outline the pad's real shape
@@ -383,26 +384,36 @@ function fit(){
 }
 function zoomBy(f){ const r=svg.getBoundingClientRect(),mx=r.width/2,my=r.height/2,nk=view.k*f;
   view.x=mx-(mx-view.x)*(nk/view.k); view.y=my-(my-view.y)*(nk/view.k); view.k=nk; applyView(); }
-function netUnder(e){   // net root under the cursor (pad → its node, else nearest trace)
+function pick(e){   // what's under the cursor — a part (its pad) takes priority over a trace's net
   const pad=e.target.closest('.pad');
-  if(pad){ const pi=+pad.dataset.pi; if(pi>=0 && _padMain[pi]!=null) return _padMain[pi]; }
-  const b=boardXY(e); return pickTraceNet(b[0],b[1]);
+  if(pad && pad.dataset.ref) return {ref:pad.dataset.ref};
+  const b=boardXY(e); const n=pickTraceNet(b[0],b[1]);
+  return n!=null ? {net:n} : null;
 }
-let drag=null, down=null, hoverRoot=null;
+let drag=null, down=null, hoverKey=null;
+const pinned=()=>pinnedNet!==null||pinnedRef!==null;
 svg.addEventListener('pointerdown',e=>{ down={x:e.clientX,y:e.clientY,moved:false}; if(e.target.closest('.pad'))return; drag={x:e.clientX,y:e.clientY,vx:view.x,vy:view.y}; svg.setPointerCapture(e.pointerId); });
 svg.addEventListener('pointermove',e=>{
   if(down && Math.abs(e.clientX-down.x)+Math.abs(e.clientY-down.y)>4) down.moved=true;
   if(drag){ view.x=drag.vx+e.clientX-drag.x; view.y=drag.vy+e.clientY-drag.y; applyView(); return; }
-  if(pinnedNet===null){ const n=netUnder(e); if(n!==hoverRoot){ hoverRoot=n; hoverNet=n!=null?new Set([n]):null; updateHighlight(); } }  // hover-highlight
+  if(!pinned()){                                    // hover-highlight when nothing is pinned
+    const p=pick(e), key=p?(p.ref?'r:'+p.ref:'n:'+p.net):null;
+    if(key!==hoverKey){ hoverKey=key; hoverRef=p&&p.ref||null; hoverNet=(p&&p.net!=null)?new Set([p.net]):null; updateHighlight(); }
+  }
 });
-svg.addEventListener('pointerleave',()=>{ if(pinnedNet===null && hoverNet!==null){ hoverRoot=null; hoverNet=null; updateHighlight(); } });
+svg.addEventListener('pointerleave',()=>{ if(!pinned() && hoverKey!==null){ hoverKey=null; hoverRef=null; hoverNet=null; updateHighlight(); } });
 svg.addEventListener('pointerup',e=>{
   if(down && !down.moved){
-    const n=netUnder(e); hoverRoot=null; hoverNet=null;
-    if(n==null){ pinnedNet=null; refHL=null; updateHighlight(); hideModal(); }
-    else if(pinnedNet && pinnedNet.has(n)){ pinnedNet=null; updateHighlight(); hideModal(); }   // toggle off
-    else { const xi=xnetOfNet(new Set([n])); pinnedNet=(xi!=null?xnetRoots[xi]:new Set([n]));
-           refHL=null; updateHighlight(); crossProbeNet(pinnedNet); }
+    const p=pick(e); hoverKey=null; hoverRef=null; hoverNet=null;
+    if(!p){ pinnedNet=null; pinnedRef=null; updateHighlight(); hideModal(); }
+    else if(p.ref){                                 // a part → highlight it + preview it in the schematic
+      if(pinnedRef===p.ref){ pinnedRef=null; updateHighlight(); hideModal(); }
+      else { pinnedRef=p.ref; pinnedNet=null; updateHighlight(); crossProbeRef(p.ref); }
+    } else {                                         // a trace → highlight the net + preview it
+      const n=p.net;
+      if(pinnedNet && pinnedNet.has(n)){ pinnedNet=null; updateHighlight(); hideModal(); }
+      else { const xi=xnetOfNet(new Set([n])); pinnedNet=(xi!=null?xnetRoots[xi]:new Set([n])); pinnedRef=null; updateHighlight(); crossProbeNet(pinnedNet); }
+    }
   }
   drag=null; down=null;
 });
@@ -440,7 +451,7 @@ function applyParams(){
   const xnet=QP.get('xnet'), ref=QP.get('ref');
   if(xnet!==null && xnetRoots[+xnet]){ pinnedNet=xnetRoots[+xnet]; updateHighlight(); zoomToBox(XP.xnets[+xnet].bbox,0.5); }
   else if(ref){
-    refHL=ref;
+    pinnedRef=ref;
     const p=M.parts.find(q=>q.ref===ref);        // show only the layer the part sits on
     if(p){ const keep=p.side?_LN[_LN.length-1]:_LN[0];
       hiddenLayers.clear(); _LN.forEach(l=>{ if(l!==keep) hiddenLayers.add(l); }); renderLayers(); }
