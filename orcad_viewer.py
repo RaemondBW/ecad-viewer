@@ -233,19 +233,8 @@ html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#E9E7E1;
 .sch-mini .mini-part{fill:var(--p-comp);opacity:.35}
 .sch-mini .mini-vp{fill:rgba(234,88,12,0.10);stroke:#EA580C;stroke-width:1.4;vector-effect:non-scaling-stroke;cursor:grab}
 body.xmodal .xtop,body.xmodal #sidebar{display:none!important}
-#xmodal{display:none;position:fixed;inset:0;background:rgba(20,18,14,.5);z-index:60;align-items:center;justify-content:center}
-#xbox{background:#FBFAF7;border:1px solid #E0DCD1;border-radius:12px;width:min(760px,88vw);height:min(620px,84vh);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(20,16,8,.35)}
-#xhead{display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid #E0DCD1;font-size:12px;font-family:'IBM Plex Mono',monospace;color:#3A362D}
-#xtitle{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#xopen,#xclose{cursor:pointer;font-size:12px;border:1px solid #C9C3B6;border-radius:6px;padding:3px 9px;background:#FFF;text-decoration:none;color:#2563a8}
-#xclose{color:#6E6A60}
-#xframe{flex:1;border:0;background:#E9E7E1}
 </style></head>
 <body>
-<div id="xmodal"><div id="xbox">
-  <div id="xhead"><span id="xtitle"></span><a id="xopen" target="_blank">Open full ↗</a><button id="xclose">✕</button></div>
-  <iframe id="xframe" src="about:blank"></iframe>
-</div></div>
 <div style="position:relative;height:100vh;display:flex;flex-direction:column;overflow:hidden">
   <!-- toolbar -->
   <div class="xtop" style="display:flex;align-items:center;gap:12px;height:54px;padding:0 14px;background:#FBFAF7;border-bottom:1px solid #E0DCD1;flex-shrink:0;z-index:40;position:relative">
@@ -566,19 +555,23 @@ const XP = __XPROBE__;      // cross-probe: {xnets:[{name,sch,reps,bbox}...], co
 const R = window.SchRender, esc = R.esc;
 const $ = id => document.getElementById(id);
 
-/* ── cross-probe: link a schematic net/part to the layout (modal preview) ── */
+/* ── cross-probe: embed the layout preview inside the details (inspector) card ── */
 const XQP = new URLSearchParams(location.search), XMODAL = XQP.get('modal') === '1';
 const schToXnet = new Map();
 if (XP && XP.xnets) XP.xnets.forEach((xn, i) => { if (xn.sch != null && !schToXnet.has(xn.sch)) schToXnet.set(xn.sch, i); });
-function xShowModal(url, full, title) { if (!XP || !XP.companion || XMODAL) return;
-  $('xframe').src = url; $('xtitle').textContent = title; $('xopen').href = full; $('xmodal').style.display = 'flex'; }
-function xHideModal() { const m = $('xmodal'); if (m) { m.style.display = 'none'; $('xframe').src = 'about:blank'; } }
-function crossProbeNet(k) { if (!schToXnet.has(k)) return; const i = schToXnet.get(k);
-  xShowModal(XP.companion + '?xnet=' + i + '&modal=1', XP.companion + '?xnet=' + i, 'Layout · ' + (XP.xnets[i].name || ('net ' + i))); }
-function crossProbeRef(des) { if (!XP || !XP.companion) return;
-  xShowModal(XP.companion + '?ref=' + encodeURIComponent(des) + '&modal=1', XP.companion + '?ref=' + encodeURIComponent(des), 'Layout · ' + des); }
+// a "Layout" section (iframe preview + open-full link) for the details card.
+// kind: 'ref' (component) | 'xnet' (net index); returns '' when no layout link.
+function layoutPreview(kind, id) {
+  if (!XP || !XP.companion || id == null || id === '') return '';
+  const q = kind + '=' + encodeURIComponent(id);
+  return `<div style="padding:8px 8px 12px;border-top:1px solid #EAE6DA">` +
+    `<div style="display:flex;align-items:center;justify-content:space-between;padding:2px 8px 6px">` +
+    `<span style="font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#8B8578">Layout</span>` +
+    `<a href="${XP.companion}?${q}" target="_blank" style="font-size:10.5px;color:#2563a8;text-decoration:none">Open full ↗</a></div>` +
+    `<iframe src="${XP.companion}?${q}&modal=1" loading="lazy" style="width:100%;height:190px;border:1px solid #E0DCD1;border-radius:8px;background:#0e0c08"></iframe></div>`;
+}
 
-let cur = 0, pinNets = [], selDes = null, q = '', searchFocus = false;
+let cur = 0, pinNets = [], selDes = null, selNet = null, q = '', searchFocus = false;
 let bomOpen = false, bomQ = '', dark = false, collapsed = {}, sheetsOpen = true, ready = false;
 let view = { x: 0, y: 0, k: 1 };
 let netSheets, netNames, bomAll, partCount, thumbs, dctx;
@@ -633,7 +626,6 @@ function init() {
   updChrome(); renderSidebar(); renderScene(); fit();
   // cross-probe: hide chrome when embedded, wire the modal, apply URL params
   if (XMODAL) document.body.classList.add('xmodal');
-  const _xm = $('xmodal'); if (_xm) { $('xclose').onclick = xHideModal; _xm.addEventListener('click', ev => { if (ev.target === _xm) xHideModal(); }); }
   const _xn = XQP.get('xnet'), _xr = XQP.get('ref');
   if (_xn !== null && XP && XP.xnets[+_xn]) { const k = XP.xnets[+_xn].sch; goNet(k, [...(netSheets.get(k) || [])]); centerNet(k); }
   else if (_xr) { for (let i = 0; i < M.sheets.length; i++) if (M.sheets[i].parts.some(p => p.des === _xr)) { goToPart(i, _xr); break; } }
@@ -717,10 +709,10 @@ function bindCanvas() {
   el.addEventListener('click', e => {
     if (suppressClick) { suppressClick = false; return; }
     const n = e.target.closest('[data-net]');
-    if (n) { togglePin(n.dataset.net); return; }
+    if (n) { const k = n.dataset.net; togglePin(k); if (isPinned(k)) selectNet(k); else if (selNet === k) closeSel(); return; }
     const c = e.target.closest('.comp[data-des]');
-    if (c) { selectPart(c.dataset.des); crossProbeRef(c.dataset.des); return; }
-    if (selDes) closeSel();
+    if (c) { selectPart(c.dataset.des); return; }
+    if (selDes || selNet) closeSel();
   });
   el.addEventListener('wheel', e => {
     e.preventDefault();
@@ -801,8 +793,7 @@ function setDefaultInfo() {
 function togglePin(k) {
   if (!k) return;
   const i = pinNets.findIndex(p => p.key === k);
-  if (i >= 0) { pinNets.splice(i, 1); if (!pinNets.length) xHideModal(); }
-  else { pinNets.push({ key: k, color: nextColor() }); crossProbeNet(k); }
+  if (i >= 0) pinNets.splice(i, 1); else pinNets.push({ key: k, color: nextColor() });
   applyPins(); renderStatus(); renderSidebar();
 }
 function pinNet(k) {   // ensure a net is pinned (used by search / pin-row clicks)
@@ -813,8 +804,9 @@ function removePinAt(i) { pinNets.splice(i, 1); applyPins(); renderStatus(); ren
 function clearPins() { pinNets = []; applyPins(); renderStatus(); renderSidebar(); }
 
 /* ---------- selection / navigation ---------- */
-function selectPart(des) { selDes = des; updateSelMark(); renderInspector(); }
-function closeSel() { selDes = null; updateSelMark(); renderInspector(); }
+function selectPart(des) { selDes = des; selNet = null; updateSelMark(); renderInspector(); }
+function selectNet(k) { selNet = k; selDes = null; updateSelMark(); renderInspector(); }
+function closeSel() { selDes = null; selNet = null; updateSelMark(); renderInspector(); }
 function updateSelMark() {
   sceneEl.querySelectorAll('.comp.sel').forEach(el => el.classList.remove('sel'));
   if (selDes) {
@@ -1029,8 +1021,26 @@ function positionInspectorNear(des) {
   ins.style.left = (left - row.left) + 'px'; ins.style.top = (top - row.top) + 'px';
   ins.style.right = 'auto'; ins.style.bottom = 'auto';
 }
+function renderNetCard(ins) {
+  const k = selNet, xi = schToXnet.has(k) ? schToXnet.get(k) : null;
+  const also = [...(netSheets.get(k) || [])].filter(i => i !== cur).map(i => sheetLabel(i));
+  ins.style.display = 'block';
+  ins.style.left = 'auto'; ins.style.right = '14px'; ins.style.top = '14px'; ins.style.bottom = 'auto';
+  ins.innerHTML =
+    `<div id="ins-head" style="display:flex;align-items:center;justify-content:space-between;padding:12px 10px 6px 16px;user-select:none">` +
+    `<span style="font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#8B8578">Net</span>` +
+    `<button id="ins-x" class="iconx" style="cursor:pointer">&times;</button></div>` +
+    `<div style="padding:0 16px 12px;border-bottom:1px solid #EAE6DA">` +
+    `<div style="font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:600;color:#221F1A;word-break:break-all">${esc(netName(k) || k)}</div>` +
+    (also.length ? `<div style="font-size:10.5px;color:#A19B8E;font-family:'IBM Plex Mono',monospace;margin-top:5px">also on ${esc(also.join(', '))}</div>` : '') +
+    `</div>` +
+    (xi != null ? layoutPreview('xnet', xi)
+                : `<div style="padding:14px 16px;color:#A19B8E;font-size:12px">No matched net in the layout.</div>`);
+  $('ins-x').addEventListener('click', closeSel);
+}
 function renderInspector() {
   const ins = $('inspector');
+  if (selNet) return renderNetCard(ins);
   if (!selDes) { ins.style.display = 'none'; ins.innerHTML = ''; return; }
   const order = [cur, ...M.sheets.map((_, i) => i).filter(i => i !== cur)];
   let sel = null, si = cur;
@@ -1054,7 +1064,8 @@ function renderInspector() {
     `<div style="font-size:11.5px;color:#6E6A60;margin-top:3px;word-break:break-word;line-height:1.35">${esc(sel.pkg || '—')}</div>` +
     `<div style="font-size:10.5px;color:#A19B8E;font-family:'IBM Plex Mono',monospace;margin-top:5px">${esc(sheetLabel(si))}</div>` +
     (diffNote ? `<div style="margin-top:6px;font-size:11px;color:#9A6700;font-family:'IBM Plex Mono',monospace;white-space:pre-line">${esc(diffNote)}</div>` : '') +
-    `</div><div style="padding:8px 8px 14px">` +
+    `</div>` + layoutPreview('ref', sel.des) +
+    `<div style="padding:8px 8px 14px">` +
     `<div style="font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#8B8578;padding:2px 8px 6px">Pins · ${pins.length}</div>` +
     pins.map((pn, i) =>
       `<div class="pinrow" data-i="${i}" style="display:grid;grid-template-columns:30px 1fr;gap:2px 8px;padding:5px 8px;border-radius:6px;cursor:pointer">` +
