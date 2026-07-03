@@ -160,9 +160,8 @@ html,body{margin:0;height:100%;overflow:hidden;background:#E9E7E1;font-family:'I
 .via{fill:#C9CCD1;stroke:#3a3f45;stroke-width:200}
 #scene.dim .cu,#scene.dim .via,#scene.dim .pad,#scene.dim .clbl{opacity:.4}
 .hl{stroke:#FFF3C4;fill:none;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:.95}
-.hlv{fill:#FFF3C4;stroke:#8a6d00;stroke-width:200}
-.hlp{fill:#FFF3C4}
-.hlr{fill:#8FD0FF}
+.hlv,.hlp{fill:none;stroke:#FFF3C4;stroke-width:2.5;vector-effect:non-scaling-stroke}
+.hlr{stroke:#8FD0FF}
 /* iframe-embed mode: hide chrome, let the net fill the frame */
 body.modal #bar,body.modal #layers,body.modal #legend{display:none!important}
 body.modal #stage{inset:0!important}
@@ -323,7 +322,10 @@ function updateHighlight(){
   for(const pt of M.parts){ const hid=hiddenLayers.has(pt.side?_LN[_LN.length-1]:_LN[0]);
     const isRef=refHL!=null && pt.ref===refHL;
     for(const pd of pt.pads){ const pn=_padNets[gi++]; if(hid) continue;
-      if(isRef || padInNet(net,pn)) h+=`<rect class="${isRef?'hlp hlr':'hlp'}" x="${pd[0]}" y="${flipY(pd[3])}" width="${pd[2]-pd[0]}" height="${pd[3]-pd[1]}" rx="${Math.min(pd[2]-pd[0],pd[3]-pd[1])*0.15}"/>`; } }
+      if(!(isRef || padInNet(net,pn))) continue;
+      const cls=isRef?'hlp hlr':'hlp', w=pd[2]-pd[0], hh=pd[3]-pd[1];   // outline the pad's real shape
+      if(pd[4]) h+=`<ellipse class="${cls}" cx="${pd[0]+w/2}" cy="${flipY(pd[1]+hh/2)}" rx="${w/2}" ry="${hh/2}"/>`;
+      else h+=`<rect class="${cls}" x="${pd[0]}" y="${flipY(pd[3])}" width="${w}" height="${hh}" rx="${Math.min(w,hh)*0.15}"/>`; } }
   hlg.innerHTML=h;
 }
 function _distSeg(px,py,ax,ay,bx,by){ const dx=bx-ax,dy=by-ay,l2=dx*dx+dy*dy; let t=l2?((px-ax)*dx+(py-ay)*dy)/l2:0; t=Math.max(0,Math.min(1,t)); return Math.hypot(px-(ax+t*dx),py-(ay+t*dy)); }
