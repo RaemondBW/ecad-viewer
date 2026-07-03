@@ -45,22 +45,33 @@ LAYER_COLORS = ["#E24A3B", "#2E7DD1", "#31A354", "#E6A020", "#9C56C4",
 
 
 def _cap_to_pitch(pads):
-    """Cap each pad's width/height to the footprint's nearest-neighbour pitch on
-    that axis (a real pad can't be wider than its pitch). The stored box is the
-    outermost padstack primitive (soldermask), which on fine-pitch parts exceeds
-    the pitch and overlaps; capping keeps the shape but guarantees a small gap."""
+    """Shrink only pads that would overlap a neighbour, per axis, using the gap to
+    the nearest neighbour that shares this pad's *perpendicular* span. A global
+    min-pitch (the old approach) breaks mixed footprints: on a QFN the tiny gap
+    between a corner pad and an edge pad collapsed every pad to a sliver. Here a
+    QFN's side pads are only bounded by other side pads (same column), not by the
+    top row, so real sizes are preserved and only true overlaps are trimmed."""
     if len(pads) < 2:
         return [tuple(p) for p in pads]
-    xs = sorted({(p[0] + p[2]) / 2 for p in pads})
-    ys = sorted({(p[1] + p[3]) / 2 for p in pads})
-    # nearest-neighbour pitch per axis, ignoring near-coincident centres (<500)
-    px = min((g for g in (xs[i + 1] - xs[i] for i in range(len(xs) - 1)) if g > 500), default=1e12)
-    py = min((g for g in (ys[i + 1] - ys[i] for i in range(len(ys) - 1)) if g > 500), default=1e12)
     out = []
-    for x1, y1, x2, y2, rnd in pads:
+    for i, (x1, y1, x2, y2, rnd) in enumerate(pads):
         cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
-        hw = min((x2 - x1) / 2, px * 0.46)
-        hh = min((y2 - y1) / 2, py * 0.46)
+        hw, hh = (x2 - x1) / 2, (y2 - y1) / 2
+        dxs, dys = [], []
+        for j, p in enumerate(pads):
+            if j == i:
+                continue
+            pcx, pcy = (p[0] + p[2]) / 2, (p[1] + p[3]) / 2
+            # ignore sub-pitch gaps (<2500): a real pad pitch here is >=5000, so a
+            # tiny centre offset is a placement artifact, not a neighbour to cap to
+            if min(y2, p[3]) > max(y1, p[1]) and abs(pcx - cx) > 2500:   # shares y-span → same row
+                dxs.append(abs(pcx - cx))
+            if min(x2, p[2]) > max(x1, p[0]) and abs(pcy - cy) > 2500:   # shares x-span → same column
+                dys.append(abs(pcy - cy))
+        if dxs:
+            hw = min(hw, min(dxs) * 0.46)
+        if dys:
+            hh = min(hh, min(dys) * 0.46)
         out.append((int(cx - hw), int(cy - hh), int(cx + hw), int(cy + hh), rnd))
     return out
 
