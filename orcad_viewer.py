@@ -1030,12 +1030,12 @@ function renderNetCard(ins) {
     `<div id="ins-head" style="display:flex;align-items:center;justify-content:space-between;padding:12px 10px 6px 16px;user-select:none">` +
     `<span style="font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#8B8578">Net</span>` +
     `<button id="ins-x" class="iconx" style="cursor:pointer">&times;</button></div>` +
+    (xi != null ? layoutPreview('xnet', xi) : '') +
     `<div style="padding:0 16px 12px;border-bottom:1px solid #EAE6DA">` +
     `<div style="font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:600;color:#221F1A;word-break:break-all">${esc(netName(k) || k)}</div>` +
     (also.length ? `<div style="font-size:10.5px;color:#A19B8E;font-family:'IBM Plex Mono',monospace;margin-top:5px">also on ${esc(also.join(', '))}</div>` : '') +
     `</div>` +
-    (xi != null ? layoutPreview('xnet', xi)
-                : `<div style="padding:14px 16px;color:#A19B8E;font-size:12px">No matched net in the layout.</div>`);
+    (xi == null ? `<div style="padding:14px 16px;color:#A19B8E;font-size:12px">No matched net in the layout.</div>` : '');
   $('ins-x').addEventListener('click', closeSel);
 }
 function renderInspector() {
@@ -1056,6 +1056,7 @@ function renderInspector() {
     `<div id="ins-head" style="display:flex;align-items:center;justify-content:space-between;padding:12px 10px 6px 16px;cursor:move;user-select:none">` +
     `<span style="font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#8B8578">Part</span>` +
     `<button id="ins-x" class="iconx" style="cursor:pointer">&times;</button></div>` +
+    layoutPreview('ref', sel.des) +
     `<div style="padding:0 16px 12px;border-bottom:1px solid #EAE6DA">` +
     `<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">` +
     `<span style="font-family:'IBM Plex Mono',monospace;font-size:20px;font-weight:600;color:#221F1A">${esc(sel.des)}</span>` +
@@ -1064,7 +1065,7 @@ function renderInspector() {
     `<div style="font-size:11.5px;color:#6E6A60;margin-top:3px;word-break:break-word;line-height:1.35">${esc(sel.pkg || '—')}</div>` +
     `<div style="font-size:10.5px;color:#A19B8E;font-family:'IBM Plex Mono',monospace;margin-top:5px">${esc(sheetLabel(si))}</div>` +
     (diffNote ? `<div style="margin-top:6px;font-size:11px;color:#9A6700;font-family:'IBM Plex Mono',monospace;white-space:pre-line">${esc(diffNote)}</div>` : '') +
-    `</div>` + layoutPreview('ref', sel.des) +
+    `</div>` +
     `<div style="padding:8px 8px 14px">` +
     `<div style="font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#8B8578;padding:2px 8px 6px">Pins · ${pins.length}</div>` +
     pins.map((pn, i) =>

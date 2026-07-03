@@ -158,7 +158,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#E9E7E1;font-family:'I
 #legend .lyr{cursor:pointer;user-select:none}
 #legend .lyr.off{opacity:.32;text-decoration:line-through}
 .via{fill:#C9CCD1;stroke:#3a3f45;stroke-width:200}
-#scene.dim .cu,#scene.dim .via,#scene.dim .pad,#scene.dim .clbl{opacity:.13}
+#scene.dim .cu,#scene.dim .via,#scene.dim .pad,#scene.dim .clbl{opacity:.4}
 .hl{stroke:#FFF3C4;fill:none;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:.95}
 .hlv{fill:#FFF3C4;stroke:#8a6d00;stroke-width:200}
 .hlp{fill:#FFF3C4}
@@ -435,7 +435,13 @@ render(); fit();
 function applyParams(){
   const xnet=QP.get('xnet'), ref=QP.get('ref');
   if(xnet!==null && xnetRoots[+xnet]){ pinnedNet=xnetRoots[+xnet]; updateHighlight(); zoomToBox(XP.xnets[+xnet].bbox,0.5); }
-  else if(ref){ refHL=ref; updateHighlight(); zoomToBox(refBox(ref),1.2); }
+  else if(ref){
+    refHL=ref;
+    const p=M.parts.find(q=>q.ref===ref);        // show only the layer the part sits on
+    if(p){ const keep=p.side?_LN[_LN.length-1]:_LN[0];
+      hiddenLayers.clear(); _LN.forEach(l=>{ if(l!==keep) hiddenLayers.add(l); }); renderLayers(); }
+    render(); zoomToBox(refBox(ref),1.2);
+  }
 }
 if(QP.get('xnet')!==null || QP.get('ref')){
   if(document.readyState==='complete') setTimeout(applyParams,40);
