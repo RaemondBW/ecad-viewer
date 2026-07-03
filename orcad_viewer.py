@@ -107,9 +107,10 @@ def _attach_diff(model, old_design, new_design, old_name):
     model["removedGeom"] = ghosts
 
 
-def generate(dsn_path, out_path, diff_path=None):
+def generate(dsn_path, out_path, diff_path=None, xprobe=None):
     model = build_model(dsn_path, diff_path)
-    html = HTML_TEMPLATE.replace("__MODEL__", json.dumps(model))
+    html = (HTML_TEMPLATE.replace("__MODEL__", json.dumps(model))
+                         .replace("__XPROBE__", json.dumps(xprobe)))
     Path(out_path).write_text(html)
     n = sum(len(s["parts"]) for s in model["sheets"])
     print(f"Wrote {out_path}  ({len(model['sheets'])} sheets, {n} parts, "
@@ -231,11 +232,23 @@ html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#E9E7E1;
 .sch-mini .mini-wire{stroke:var(--p-wire);stroke-width:1;vector-effect:non-scaling-stroke;opacity:.5}
 .sch-mini .mini-part{fill:var(--p-comp);opacity:.35}
 .sch-mini .mini-vp{fill:rgba(234,88,12,0.10);stroke:#EA580C;stroke-width:1.4;vector-effect:non-scaling-stroke;cursor:grab}
+body.xmodal .xtop,body.xmodal #sidebar{display:none!important}
+#xmodal{display:none;position:fixed;inset:0;background:rgba(20,18,14,.5);z-index:60;align-items:center;justify-content:center}
+#xbox{background:#FBFAF7;border:1px solid #E0DCD1;border-radius:12px;width:min(760px,88vw);height:min(620px,84vh);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(20,16,8,.35)}
+#xhead{display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid #E0DCD1;font-size:12px;font-family:'IBM Plex Mono',monospace;color:#3A362D}
+#xtitle{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#xopen,#xclose{cursor:pointer;font-size:12px;border:1px solid #C9C3B6;border-radius:6px;padding:3px 9px;background:#FFF;text-decoration:none;color:#2563a8}
+#xclose{color:#6E6A60}
+#xframe{flex:1;border:0;background:#E9E7E1}
 </style></head>
 <body>
+<div id="xmodal"><div id="xbox">
+  <div id="xhead"><span id="xtitle"></span><a id="xopen" target="_blank">Open full ↗</a><button id="xclose">✕</button></div>
+  <iframe id="xframe" src="about:blank"></iframe>
+</div></div>
 <div style="position:relative;height:100vh;display:flex;flex-direction:column;overflow:hidden">
   <!-- toolbar -->
-  <div style="display:flex;align-items:center;gap:12px;height:54px;padding:0 14px;background:#FBFAF7;border-bottom:1px solid #E0DCD1;flex-shrink:0;z-index:40;position:relative">
+  <div class="xtop" style="display:flex;align-items:center;gap:12px;height:54px;padding:0 14px;background:#FBFAF7;border-bottom:1px solid #E0DCD1;flex-shrink:0;z-index:40;position:relative">
     <button id="tb-sheets-btn" class="tbtn" style="display:none">Sheets</button>
     <div style="display:flex;flex-direction:column;gap:1px;min-width:0">
       <div id="tb-name" style="font-size:14px;font-weight:700;letter-spacing:.01em;line-height:1.15;white-space:nowrap">Schematic</div>
@@ -549,8 +562,21 @@ html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#E9E7E1;
 
 /* ── App ── */
 const M = __MODEL__;
+const XP = __XPROBE__;      // cross-probe: {xnets:[{name,sch,reps,bbox}...], companion} or null
 const R = window.SchRender, esc = R.esc;
 const $ = id => document.getElementById(id);
+
+/* ── cross-probe: link a schematic net/part to the layout (modal preview) ── */
+const XQP = new URLSearchParams(location.search), XMODAL = XQP.get('modal') === '1';
+const schToXnet = new Map();
+if (XP && XP.xnets) XP.xnets.forEach((xn, i) => { if (xn.sch != null && !schToXnet.has(xn.sch)) schToXnet.set(xn.sch, i); });
+function xShowModal(url, full, title) { if (!XP || !XP.companion || XMODAL) return;
+  $('xframe').src = url; $('xtitle').textContent = title; $('xopen').href = full; $('xmodal').style.display = 'flex'; }
+function xHideModal() { const m = $('xmodal'); if (m) { m.style.display = 'none'; $('xframe').src = 'about:blank'; } }
+function crossProbeNet(k) { if (!schToXnet.has(k)) return; const i = schToXnet.get(k);
+  xShowModal(XP.companion + '?xnet=' + i + '&modal=1', XP.companion + '?xnet=' + i, 'Layout · ' + (XP.xnets[i].name || ('net ' + i))); }
+function crossProbeRef(des) { if (!XP || !XP.companion) return;
+  xShowModal(XP.companion + '?ref=' + encodeURIComponent(des) + '&modal=1', XP.companion + '?ref=' + encodeURIComponent(des), 'Layout · ' + des); }
 
 let cur = 0, pinNets = [], selDes = null, q = '', searchFocus = false;
 let bomOpen = false, bomQ = '', dark = false, collapsed = {}, sheetsOpen = true, ready = false;
@@ -605,6 +631,12 @@ function init() {
   insEl.addEventListener('pointerleave', () => { if (selDes) scheduleCardClose(); });
   ready = true;
   updChrome(); renderSidebar(); renderScene(); fit();
+  // cross-probe: hide chrome when embedded, wire the modal, apply URL params
+  if (XMODAL) document.body.classList.add('xmodal');
+  const _xm = $('xmodal'); if (_xm) { $('xclose').onclick = xHideModal; _xm.addEventListener('click', ev => { if (ev.target === _xm) xHideModal(); }); }
+  const _xn = XQP.get('xnet'), _xr = XQP.get('ref');
+  if (_xn !== null && XP && XP.xnets[+_xn]) { const k = XP.xnets[+_xn].sch; goNet(k, [...(netSheets.get(k) || [])]); centerNet(k); }
+  else if (_xr) { for (let i = 0; i < M.sheets.length; i++) if (M.sheets[i].parts.some(p => p.des === _xr)) { goToPart(i, _xr); break; } }
 }
 
 /* ---------- scene ---------- */
@@ -687,7 +719,7 @@ function bindCanvas() {
     const n = e.target.closest('[data-net]');
     if (n) { togglePin(n.dataset.net); return; }
     const c = e.target.closest('.comp[data-des]');
-    if (c) { selectPart(c.dataset.des); return; }
+    if (c) { selectPart(c.dataset.des); crossProbeRef(c.dataset.des); return; }
     if (selDes) closeSel();
   });
   el.addEventListener('wheel', e => {
@@ -769,7 +801,8 @@ function setDefaultInfo() {
 function togglePin(k) {
   if (!k) return;
   const i = pinNets.findIndex(p => p.key === k);
-  if (i >= 0) pinNets.splice(i, 1); else pinNets.push({ key: k, color: nextColor() });
+  if (i >= 0) { pinNets.splice(i, 1); if (!pinNets.length) xHideModal(); }
+  else { pinNets.push({ key: k, color: nextColor() }); crossProbeNet(k); }
   applyPins(); renderStatus(); renderSidebar();
 }
 function pinNet(k) {   // ensure a net is pinned (used by search / pin-row clicks)
@@ -818,6 +851,16 @@ function goNet(k, pages) {
   q = ''; searchFocus = false; $('tb-search').value = ''; renderDrop();
   if (!pages.includes(cur) && pages.length) { cur = pages[0]; selDes = null; renderScene(); fit(); updChrome(); renderInspector(); }
   pinNet(k);
+}
+function centerNet(k) {   // fit the view around a net's wires/pins on the current sheet
+  const els = [...sceneEl.querySelectorAll('[data-net]')].filter(el => el.dataset.net === k);
+  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  els.forEach(el => { const b = el.getBBox && el.getBBox();
+    if (b) { x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y); x1 = Math.max(x1, b.x + b.width); y1 = Math.max(y1, b.y + b.height); } });
+  if (x1 < x0) return;
+  const r = svgEl.getBoundingClientRect(), cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+  view.k = Math.min(6, Math.max(1.2, Math.min(r.width / ((x1 - x0) * 1.5 + 1), r.height / ((y1 - y0) * 1.5 + 1))));
+  view.x = r.width / 2 - cx * view.k; view.y = r.height / 2 - cy * view.k; applyView();
 }
 
 /* ---------- tooltip ---------- */
