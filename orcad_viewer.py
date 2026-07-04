@@ -18,6 +18,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import orcad_convert as oc  # noqa: E402
+import comment_ui           # noqa: E402
 
 
 def _component_index(design):
@@ -110,7 +111,9 @@ def _attach_diff(model, old_design, new_design, old_name):
 def generate(dsn_path, out_path, diff_path=None, xprobe=None):
     model = build_model(dsn_path, diff_path)
     html = (HTML_TEMPLATE.replace("__MODEL__", json.dumps(model))
-                         .replace("__XPROBE__", json.dumps(xprobe)))
+                         .replace("__XPROBE__", json.dumps(xprobe))
+                         .replace("/*__CMT_CSS__*/", comment_ui.CSS)
+                         .replace("/*__CMT_JS__*/", comment_ui.JS))
     Path(out_path).write_text(html)
     n = sum(len(s["parts"]) for s in model["sheets"])
     print(f"Wrote {out_path}  ({len(model['sheets'])} sheets, {n} parts, "
@@ -233,6 +236,8 @@ html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#E9E7E1;
 .sch-mini .mini-part{fill:var(--p-comp);opacity:.35}
 .sch-mini .mini-vp{fill:rgba(234,88,12,0.10);stroke:#EA580C;stroke-width:1.4;vector-effect:non-scaling-stroke;cursor:grab}
 body.xmodal .xtop,body.xmodal #sidebar,body.xmodal #minimap,body.xmodal #inspector{display:none!important}
+body.xmodal #cmt-btn,body.xmodal #cmt-layer{display:none!important}
+/*__CMT_CSS__*/
 </style></head>
 <body>
 <div style="position:relative;height:100vh;display:flex;flex-direction:column;overflow:hidden">
@@ -257,6 +262,7 @@ body.xmodal .xtop,body.xmodal #sidebar,body.xmodal #minimap,body.xmodal #inspect
     <div style="flex:1"></div>
     <button id="tb-theme" class="tbtn" title="Toggle canvas theme" style="min-width:52px">Dark</button>
     <button id="tb-bom" class="tbtn">BOM</button>
+    <button id="cmt-btn" class="tbtn" title="Add / view comments">💬 Comment</button>
     <button id="tb-fit" class="tbtn">Fit</button>
     <div style="display:flex;align-items:center;border:1px solid #D9D4C6;border-radius:8px;background:#FFFFFF;overflow:hidden;flex-shrink:0">
       <button id="tb-zout" class="zbtn">&#8722;</button>
@@ -552,6 +558,7 @@ body.xmodal .xtop,body.xmodal #sidebar,body.xmodal #minimap,body.xmodal #inspect
 /* ── App ── */
 const M = __MODEL__;
 const XP = __XPROBE__;      // cross-probe: {xnets:[{name,sch,reps,bbox}...], companion} or null
+/*__CMT_JS__*/
 const R = window.SchRender, esc = R.esc;
 const $ = id => document.getElementById(id);
 
@@ -602,7 +609,7 @@ function driveFrame(target) {   // target: {ref}|{xnet} with .href, or null to h
   }
 }
 
-let cur = 0, pinNets = [], selDes = null, selNet = null, cardPinned = false, q = '', searchFocus = false;
+let cur = 0, pinNets = [], selDes = null, selNet = null, cardPinned = false, q = '', searchFocus = false, _cmtSheet = -1;
 let bomOpen = false, bomQ = '', dark = false, collapsed = {}, sheetsOpen = true, ready = false;
 let view = { x: 0, y: 0, k: 1 };
 let netSheets, netNames, bomAll, partCount, thumbs, dctx;
@@ -666,6 +673,25 @@ function init() {
     } else goToPart(i, _xr);
     break;
   } }
+  // ---- comments: anchor to a part, a net, or an open point (per sheet) ----
+  if (!XMODAL) {
+    Comments.init({
+      context: () => 'sch:' + (M.name || '') + ':' + cur,
+      svg: svgEl, stage: $('stage'), button: $('cmt-btn'),
+      project: (x, y) => ({ sx: x * view.k + view.x, sy: y * view.k + view.y }),
+      resolveAnchor: (cx, cy) => {
+        const r = svgEl.getBoundingClientRect();
+        const sx = (cx - r.left - view.x) / view.k, sy = (cy - r.top - view.y) / view.k;
+        const el = document.elementFromPoint(cx, cy);
+        const comp = el && el.closest && el.closest('.comp[data-des]');
+        const net = el && el.closest && el.closest('[data-net]');
+        if (comp) return { kind: 'part', x: sx, y: sy, ref: comp.dataset.des, label: 'Part ' + comp.dataset.des };
+        if (net) { const k = net.dataset.net; return { kind: 'net', x: sx, y: sy, ref: k, label: 'Net ' + (netName(k) || k) }; }
+        return { kind: 'point', x: sx, y: sy, label: 'Comment' };
+      }
+    });
+    window._cmtReady = true; _cmtSheet = cur;
+  }
 }
 
 /* ---------- scene ---------- */
@@ -677,11 +703,13 @@ function renderScene() {
   applyPins();
   updateSelMark();
   renderMini();
+  if (window._cmtReady && _cmtSheet !== cur) { _cmtSheet = cur; Comments.setContext(); }   // per-sheet comments
 }
 function applyView() {
   sceneEl.setAttribute('transform', `translate(${view.x},${view.y}) scale(${view.k})`);
   $('tb-zoom').textContent = Math.round(view.k * 100) + '%';
   updateVp();
+  if (window.Comments) Comments.reproject();
 }
 function fit() {
   if (!svgEl || !ready) return;
@@ -722,7 +750,7 @@ function bindCanvas() {
     if (des !== overDes) {
       if (des) {                       // entered a part
         cancelCardClose();
-        if (des !== selDes && !cardPinned && !XMODAL) { hoverDes = des; clearTimeout(hoverTimer);
+        if (des !== selDes && !cardPinned && !XMODAL && !(window.Comments && Comments.isPlacing())) { hoverDes = des; clearTimeout(hoverTimer);
           hoverTimer = setTimeout(() => { if (hoverDes === des && !cardPinned) selectPart(des); }, 90); }
       } else {                         // left a part onto empty canvas
         hoverDes = null; clearTimeout(hoverTimer);
@@ -745,6 +773,7 @@ function bindCanvas() {
   });
   el.addEventListener('click', e => {
     if (suppressClick) { suppressClick = false; return; }
+    if (window.Comments && Comments.isPlacing()) { Comments.place(e.clientX, e.clientY); return; }
     const n = e.target.closest('[data-net]');
     if (n) { const k = n.dataset.net; togglePin(k); if (isPinned(k)) { cardPinned = true; selectNet(k); } else if (selNet === k) closeSel(); return; }
     const c = e.target.closest('.comp[data-des]');

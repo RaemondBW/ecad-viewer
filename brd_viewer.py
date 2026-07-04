@@ -21,6 +21,7 @@ SCRIPT_DIR = Path(__file__).parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import brd_convert as bc          # noqa: E402
 import orcad_convert as oc        # noqa: E402
+import comment_ui                 # noqa: E402
 
 # marker colour + half-size (board units) per reference-designator prefix
 TYPES = {
@@ -119,7 +120,9 @@ def generate(brd_path, out_path, bom_path=None, xprobe=None, model=None):
     if model is None:
         model = build(brd_path, bom_path)
     html = (HTML.replace("__MODEL__", json.dumps(model))
-                .replace("__XPROBE__", json.dumps(xprobe)))
+                .replace("__XPROBE__", json.dumps(xprobe))
+                .replace("/*__CMT_CSS__*/", comment_ui.CSS)
+                .replace("/*__CMT_JS__*/", comment_ui.JS))
     Path(out_path).write_text(html)
     print(f"Wrote {out_path}  ({len(model['parts'])} components, "
           f"{len(model['copper']) // 5} copper segments, "
@@ -177,6 +180,7 @@ body.modal #stage{inset:0!important}
 .pad{cursor:pointer}
 .comp.hot,.pad.hot{stroke:#FFFFFF;stroke-width:1400;paint-order:stroke}
 .clbl{fill:#EDEAE2;font-family:'IBM Plex Mono',monospace;text-anchor:middle;dominant-baseline:central;pointer-events:none;paint-order:stroke;stroke:rgba(12,18,15,.55);stroke-width:60}
+/*__CMT_CSS__*/
 </style></head>
 <body>
 <div id="bar">
@@ -185,6 +189,7 @@ body.modal #stage{inset:0!important}
   <button class="tbtn" id="cu" style="border-color:#C98A3A;color:#9A5A18">● Copper</button>
   <button class="tbtn" id="vi" style="border-color:#9AA0A8;color:#5A6068">● Vias</button>
   <button class="tbtn" id="cp" style="border-color:#8FA88F;color:#3d5a3d">● Parts</button>
+  <button class="tbtn" id="cmt-btn" title="Add / view comments">💬 Comment</button>
   <button class="tbtn" id="fit">Fit</button>
   <div style="display:flex;align-items:center;border:1px solid #D9D4C6;border-radius:8px;background:#FFF;overflow:hidden">
     <button class="tbtn" id="zo" style="border:none;border-radius:0">&#8722;</button>
@@ -201,11 +206,12 @@ body.modal #stage{inset:0!important}
 <script>
 const M = __MODEL__;
 const XP = __XPROBE__;       // cross-probe: {xnets:[{name,sch,reps,bbox}...], companion} or null
+/*__CMT_JS__*/
 const svg=document.getElementById('svg'), scene=document.getElementById('scene'), hlg=document.getElementById('hlg'), tip=document.getElementById('tip');
 const [x0,y0,x1,y1]=M.extent, W=x1-x0, H=y1-y0, PAD=Math.max(W,H)*0.04;
 const flipY = y => (y1 - y);   // board y is up
 let view={x:0,y:0,k:1};
-function applyView(){ const t=`translate(${view.x},${view.y}) scale(${view.k})`; scene.setAttribute('transform',t); hlg.setAttribute('transform',t); document.getElementById('zl').textContent=Math.round(view.k*100/baseK)+'%'; }
+function applyView(){ const t=`translate(${view.x},${view.y}) scale(${view.k})`; scene.setAttribute('transform',t); hlg.setAttribute('transform',t); document.getElementById('zl').textContent=Math.round(view.k*100/baseK)+'%'; Comments.reproject(); }
 let baseK=1;
 function esc(s){return (s+'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 
@@ -396,7 +402,7 @@ svg.addEventListener('pointerdown',e=>{ down={x:e.clientX,y:e.clientY,moved:fals
 svg.addEventListener('pointermove',e=>{
   if(down && Math.abs(e.clientX-down.x)+Math.abs(e.clientY-down.y)>4) down.moved=true;
   if(drag){ view.x=drag.vx+e.clientX-drag.x; view.y=drag.vy+e.clientY-drag.y; applyView(); return; }
-  if(!pinned()){                                    // hover-highlight when nothing is pinned
+  if(!pinned() && !Comments.isPlacing()){           // hover-highlight when nothing is pinned
     const p=pick(e), key=p?(p.ref?'r:'+p.ref:'n:'+p.net):null;
     if(key!==hoverKey){ hoverKey=key; hoverRef=p&&p.ref||null; hoverNet=(p&&p.net!=null)?new Set([p.net]):null; updateHighlight(); }
   }
@@ -404,6 +410,7 @@ svg.addEventListener('pointermove',e=>{
 svg.addEventListener('pointerleave',()=>{ if(!pinned() && hoverKey!==null){ hoverKey=null; hoverRef=null; hoverNet=null; updateHighlight(); } });
 svg.addEventListener('pointerup',e=>{
   if(down && !down.moved){
+    if(Comments.isPlacing()){ Comments.place(e.clientX,e.clientY); drag=null; down=null; return; }
     const p=pick(e); hoverKey=null; hoverRef=null; hoverNet=null;
     if(!p){ pinnedNet=null; pinnedRef=null; updateHighlight(); hideModal(); }
     else if(p.ref){                                 // a part → highlight it + preview it in the schematic
@@ -445,6 +452,21 @@ if(MODALMODE) document.body.classList.add('modal');
 if(modal){ document.getElementById('xclose').onclick=hideModal;
   modal.addEventListener('click',ev=>{ if(ev.target===modal) hideModal(); }); }
 render(); fit();
+// ---- comments: anchor to a pad (part), a trace's net, or an open point ----
+if(!MODALMODE) Comments.init({
+  context:'brd:'+(M.name||''), svg:svg, stage:document.getElementById('stage'),
+  button:document.getElementById('cmt-btn'),
+  project:(x,y)=>({sx:x*view.k+view.x, sy:flipY(y)*view.k+view.y}),
+  resolveAnchor:(cx,cy)=>{
+    const r=svg.getBoundingClientRect();
+    const bx=(cx-r.left-view.x)/view.k, by=y1-((cy-r.top-view.y)/view.k);
+    const el=document.elementFromPoint(cx,cy), pad=el&&el.closest&&el.closest('.pad');
+    if(pad&&pad.dataset.ref) return {kind:'pad',x:bx,y:by,ref:pad.dataset.ref,label:'Part '+pad.dataset.ref};
+    const n=pickTraceNet(bx,by);
+    if(n!=null){ const xi=xnetOfNet(new Set([n])); return {kind:'net',x:bx,y:by,ref:(xi!=null?'xnet'+xi:null),label:'Net'+(xi!=null&&XP?(' '+(XP.xnets[xi].name||xi)):'')}; }
+    return {kind:'point',x:bx,y:by,label:'Comment'};
+  }
+});
 // apply a cross-probe target (from ?xnet/?ref on load, or a postMessage from an
 // embedding parent so a live preview can update without reloading the page).
 let _curKeep=undefined;                            // currently isolated layer (null=all shown)
