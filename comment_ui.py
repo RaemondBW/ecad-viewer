@@ -107,12 +107,24 @@ window.Comments = (function () {
     [...layer.querySelectorAll('.cmt-marker[data-id]')].forEach(el => el.onclick = ev => { ev.stopPropagation(); openThread(el.dataset.id); });
   }
 
-  function positionPanel(a) {
+  function positionPanel(a) {   // keep the panel off the marker AND the item it points at
     const panel = $('cmt-panel'), st = cfg.stage, p = markerPos(a); if (!p) return;
-    const w = 306, pad = 10;
-    let left = Math.max(pad, Math.min(p.sx + 16, st.clientWidth - w - pad));
-    let top = Math.max(pad, Math.min(p.sy - 24, st.clientHeight - 150));
-    panel.style.left = left + 'px'; panel.style.top = top + 'px';
+    const w = panel.offsetWidth || 306, h = Math.min(panel.offsetHeight || 260, st.clientHeight - 20), pad = 10, clear = 28;
+    let tx = p.sx, ty = p.sy;
+    if (a.tx != null) { const tp = cfg.project(a.tx, a.ty); tx = tp.sx; ty = tp.sy; }
+    const dx = p.sx - tx, dy = p.sy - ty;   // direction away from the target
+    const fitsR = p.sx + clear + w <= st.clientWidth - pad, fitsL = p.sx - clear - w >= pad;
+    const fitsB = p.sy + clear + h <= st.clientHeight - pad, fitsA = p.sy - clear - h >= pad;
+    let left, top;
+    if (Math.abs(dx) >= Math.abs(dy)) {     // target mostly to a side → panel on the opposite side
+      left = dx >= 0 ? (fitsR ? p.sx + clear : p.sx - clear - w) : (fitsL ? p.sx - clear - w : p.sx + clear);
+      top = p.sy - h / 2;
+    } else {                                 // target mostly above/below → panel opposite vertically
+      top = dy >= 0 ? (fitsB ? p.sy + clear : p.sy - clear - h) : (fitsA ? p.sy - clear - h : p.sy + clear);
+      left = p.sx - w / 2;
+    }
+    panel.style.left = Math.max(pad, Math.min(left, st.clientWidth - w - pad)) + 'px';
+    panel.style.top = Math.max(pad, Math.min(top, st.clientHeight - h - pad)) + 'px';
   }
 
   function panelHtml(t, isDraft) {
