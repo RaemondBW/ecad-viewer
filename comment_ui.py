@@ -26,10 +26,8 @@ CSS = r"""
 .cmt-marker.active .pin{outline:2px solid #2563a8;outline-offset:2px}
 body.cmt-placing #svg,body.cmt-placing #svg *{cursor:default!important}
 #cmt-ghost{position:absolute;transform:translate(-50%,-50%);pointer-events:none;z-index:17}
-#cmt-ghost svg{display:block;overflow:visible;filter:drop-shadow(0 1px 2px rgba(0,0,0,.35))}
-#cmt-ghost .cmt-ring{fill:rgba(245,166,35,.15);stroke:#F5A623;stroke-width:2.5}
-#cmt-ghost .cmt-dot{fill:#F5A623;stroke:#fff;stroke-width:1.5}
-#cmt-ghost .cmt-needle{fill:#F5A623}
+#cmt-ghost .pin{width:22px;height:22px;border-radius:50% 50% 50% 3px;background:#F5A623;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.32)}
+#cmt-ghost.circle .pin{border-radius:50%!important;transform:none!important}
 .tbtn.on,#cmt-btn.on{background:#F5A623;border-color:#D98E12;color:#fff}
 #cmt-panel{position:absolute;width:306px;max-height:78%;display:none;flex-direction:column;background:#fff;border:1px solid #E0DCD1;border-radius:12px;box-shadow:0 16px 40px rgba(20,16,8,.24);z-index:41;overflow:hidden;font-family:'IBM Plex Sans',system-ui,sans-serif}
 #cmt-panel .cmt-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 10px 9px 13px;border-bottom:1px solid #EEE9DE;font-size:12px}
@@ -162,7 +160,7 @@ window.Comments = (function () {
       if (!$('cmt-ghost')) {   // a ring at the cursor; a pointer rotates toward the nearest item
         // (append to the stage, not #cmt-layer, since renderMarkers() rewrites that layer)
         const g = document.createElement('div'); g.id = 'cmt-ghost'; g.style.display = 'none';
-        g.innerHTML = '<svg width="40" height="40" viewBox="-20 -20 40 40"><circle class="cmt-ring" r="10"/><g class="cmt-needle"><path d="M0,-14 L-4.5,-6 L4.5,-6 Z"/></g><circle class="cmt-dot" r="4.5"/></svg>';
+        g.innerHTML = '<div class="pin"></div>';   // the marker pin, minus the number
         st.appendChild(g);
       }
       config.svg.addEventListener('pointermove', e => {
@@ -170,9 +168,10 @@ window.Comments = (function () {
         const a = cfg.resolveAnchor(e.clientX, e.clientY); if (!a) { hideGhost(); return; }
         const c = cfg.project(a.x, a.y), g = $('cmt-ghost'); if (!g) return;
         g.style.left = c.sx + 'px'; g.style.top = c.sy + 'px'; g.style.display = 'block';
-        const needle = g.querySelector('.cmt-needle');
-        if (a.tx != null) { const t = cfg.project(a.tx, a.ty); needle.style.display = ''; needle.setAttribute('transform', 'rotate(' + (Math.atan2(t.sy - c.sy, t.sx - c.sx) * 180 / Math.PI + 90) + ')'); }
-        else needle.style.display = 'none';
+        const pin = g.querySelector('.pin');
+        if (a.tx != null) { const t = cfg.project(a.tx, a.ty);   // rotate the teardrop's point toward the item
+          pin.style.transform = 'rotate(' + (Math.atan2(t.sy - c.sy, t.sx - c.sx) * 180 / Math.PI - 45) + 'deg)'; g.classList.remove('circle'); }
+        else { pin.style.transform = 'none'; g.classList.add('circle'); }   // nothing near → a plain circle
       });
       config.svg.addEventListener('pointerleave', () => hideGhost());
       if (config.button) config.button.onclick = () => setPlacing(!placing);
