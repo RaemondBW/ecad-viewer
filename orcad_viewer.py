@@ -682,12 +682,14 @@ function init() {
       resolveAnchor: (cx, cy) => {
         const r = svgEl.getBoundingClientRect();
         const sx = (cx - r.left - view.x) / view.k, sy = (cy - r.top - view.y) / view.k;
-        const el = document.elementFromPoint(cx, cy);
-        const comp = el && el.closest && el.closest('.comp[data-des]');
-        const net = el && el.closest && el.closest('[data-net]');
-        if (comp) return { kind: 'part', x: sx, y: sy, ref: comp.dataset.des, label: 'Part ' + comp.dataset.des };
-        if (net) { const k = net.dataset.net; return { kind: 'net', x: sx, y: sy, ref: k, label: 'Net ' + (netName(k) || k) }; }
-        return { kind: 'point', x: sx, y: sy, label: 'Comment' };
+        const s = M.sheets[cur], tol = 28 / view.k;
+        let best = null, bd = tol * tol;               // snap to the closest pin / wire
+        const seg = (ax, ay, bx, by) => { const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy; let t = l2 ? ((sx - ax) * dx + (sy - ay) * dy) / l2 : 0; t = Math.max(0, Math.min(1, t)); const qx = ax + t * dx, qy = ay + t * dy; return [qx, qy, (sx - qx) * (sx - qx) + (sy - qy) * (sy - qy)]; };
+        for (const p of s.parts) for (const pin of (p.pins || [])) { const dx = pin[0] - sx, dy = pin[1] - sy, d = dx * dx + dy * dy; if (d < bd) { bd = d; best = { kind: 'pin', x: pin[0], y: pin[1], ref: p.des + '.' + pin[3], net: pin[2], label: 'Pin ' + p.des + '.' + pin[3] }; } }
+        for (const w of (s.wires || [])) { const q = seg(w[0], w[1], w[2], w[3]); if (q[2] < bd) { bd = q[2]; best = { kind: 'net', x: q[0], y: q[1], ref: w[4], label: 'Net ' + (netName(w[4]) || w[4]) }; } }
+        if (best) return best;
+        for (const p of s.parts) if (p.box && sx >= p.box[0] && sx <= p.box[0] + p.box[2] && sy >= p.box[1] && sy <= p.box[1] + p.box[3]) return { kind: 'part', x: sx, y: sy, ref: p.des, label: 'Part ' + p.des };
+        return { kind: 'point', x: sx, y: sy, label: 'Open space' };
       }
     });
     window._cmtReady = true; _cmtSheet = cur;
