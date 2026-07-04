@@ -168,6 +168,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#E9E7E1;font-family:'I
 /* iframe-embed mode: hide chrome, let the net fill the frame */
 body.modal #bar,body.modal #layers,body.modal #legend{display:none!important}
 body.modal #stage{inset:0!important}
+body.modal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom/hover/click */
 /* cross-probe modal */
 #xmodal{display:none;position:fixed;inset:0;background:rgba(20,18,14,.55);z-index:20;align-items:center;justify-content:center}
 #xbox{background:#12100C;border:1px solid #3a352b;border-radius:12px;width:min(760px,86vw);height:min(620px,82vh);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.5)}
@@ -408,8 +409,9 @@ function pick(e){   // what's under the cursor — a part (its pad) takes priori
 }
 let drag=null, down=null, hoverKey=null;
 const pinned=()=>pinnedNet!==null||pinnedRef!==null;
-svg.addEventListener('pointerdown',e=>{ down={x:e.clientX,y:e.clientY,moved:false}; if(e.target.closest('.pad'))return; drag={x:e.clientX,y:e.clientY,vx:view.x,vy:view.y}; svg.setPointerCapture(e.pointerId); });
+svg.addEventListener('pointerdown',e=>{ if(MODALMODE)return; down={x:e.clientX,y:e.clientY,moved:false}; if(e.target.closest('.pad'))return; drag={x:e.clientX,y:e.clientY,vx:view.x,vy:view.y}; svg.setPointerCapture(e.pointerId); });
 svg.addEventListener('pointermove',e=>{
+  if(MODALMODE)return;
   if(down && Math.abs(e.clientX-down.x)+Math.abs(e.clientY-down.y)>4) down.moved=true;
   if(drag){ view.x=drag.vx+e.clientX-drag.x; view.y=drag.vy+e.clientY-drag.y; applyView(); return; }
   if(!pinned() && !Comments.isPlacing()){           // hover-highlight when nothing is pinned
@@ -419,6 +421,7 @@ svg.addEventListener('pointermove',e=>{
 });
 svg.addEventListener('pointerleave',()=>{ if(!pinned() && hoverKey!==null){ hoverKey=null; hoverRef=null; hoverNet=null; updateHighlight(); } });
 svg.addEventListener('pointerup',e=>{
+  if(MODALMODE)return;
   if(down && !down.moved){
     if(Comments.isPlacing()){ Comments.place(e.clientX,e.clientY); drag=null; down=null; return; }
     const p=pick(e); hoverKey=null; hoverRef=null; hoverNet=null;
@@ -434,7 +437,7 @@ svg.addEventListener('pointerup',e=>{
   }
   drag=null; down=null;
 });
-svg.addEventListener('wheel',e=>{ e.preventDefault(); const r=svg.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;
+svg.addEventListener('wheel',e=>{ if(MODALMODE)return; e.preventDefault(); const r=svg.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;
   const f=Math.exp(-e.deltaY*0.0015),nk=view.k*f; view.x=mx-(mx-view.x)*(nk/view.k); view.y=my-(my-view.y)*(nk/view.k); view.k=nk; applyView(); },{passive:false});
 document.getElementById('cu').onclick=e=>{ showCopper=!showCopper; e.currentTarget.style.opacity=showCopper?1:0.45; render(); };
 document.getElementById('vi').onclick=e=>{ showVias=!showVias; e.currentTarget.style.opacity=showVias?1:0.45; render(); };

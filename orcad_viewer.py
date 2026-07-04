@@ -237,6 +237,7 @@ html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#E9E7E1;
 .sch-mini .mini-vp{fill:rgba(234,88,12,0.10);stroke:#EA580C;stroke-width:1.4;vector-effect:non-scaling-stroke;cursor:grab}
 body.xmodal .xtop,body.xmodal #sidebar,body.xmodal #minimap,body.xmodal #inspector{display:none!important}
 body.xmodal #cmt-btn,body.xmodal #cmt-layer{display:none!important}
+body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom/hover/click */
 /*__CMT_CSS__*/
 </style></head>
 <body>
@@ -739,6 +740,7 @@ function zoomBy(f) {
 
 /* ---------- canvas events ---------- */
 function bindCanvas() {
+  if (XMODAL) return;   // embedded preview: static, no pan/zoom/select/hover
   const el = svgEl;
   el.addEventListener('pointerdown', e => {
     if (e.target.closest('[data-net],[data-des]')) return;
