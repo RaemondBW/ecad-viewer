@@ -169,8 +169,8 @@ window.Comments = (function () {
         const c = cfg.project(a.x, a.y), g = $('cmt-ghost'); if (!g) return;
         g.style.left = c.sx + 'px'; g.style.top = c.sy + 'px'; g.style.display = 'block';
         const pin = g.querySelector('.pin');
-        if (a.tx != null) { const t = cfg.project(a.tx, a.ty);   // rotate the teardrop's point toward the item
-          pin.style.transform = 'rotate(' + (Math.atan2(t.sy - c.sy, t.sx - c.sx) * 180 / Math.PI - 45) + 'deg)'; g.classList.remove('circle'); }
+        if (a.tx != null) { const t = cfg.project(a.tx, a.ty);   // aim the teardrop's sharp corner (at 135° when unrotated) toward the item
+          pin.style.transform = 'rotate(' + (Math.atan2(t.sy - c.sy, t.sx - c.sx) * 180 / Math.PI - 135) + 'deg)'; g.classList.remove('circle'); }
         else { pin.style.transform = 'none'; g.classList.add('circle'); }   // nothing near → a plain circle
       });
       config.svg.addEventListener('pointerleave', () => hideGhost());
