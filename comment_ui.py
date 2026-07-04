@@ -71,8 +71,8 @@ window.Comments = (function () {
       addReply: async (id, m) => { const a = read(); const t = a.find(x => x.id === id); if (t) { t.messages.push(m); write(a); } return m; },
       update: async (id, p) => { const a = read(); const t = a.find(x => x.id === id); if (t) { Object.assign(t, p); write(a); } },
       remove: async id => write(read().filter(x => x.id !== id)),
-      // sync thread count for an arbitrary context (for per-page badges)
-      countFor: c => { try { return JSON.parse(localStorage.getItem('xcomments:' + c) || '[]').length; } catch (e) { return 0; } },
+      // sync count of UNRESOLVED threads for an arbitrary context (for per-page badges)
+      countFor: c => { try { return JSON.parse(localStorage.getItem('xcomments:' + c) || '[]').filter(t => !t.resolved).length; } catch (e) { return 0; } },
     };
   }
 
