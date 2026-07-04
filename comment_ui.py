@@ -19,9 +19,10 @@ Each viewer calls Comments.init(adapter) supplying coordinate + anchor hooks:
 
 CSS = r"""
 #cmt-layer{position:absolute;inset:0;pointer-events:none;z-index:16;overflow:hidden}
-.cmt-marker{position:absolute;transform:translate(-50%,-100%);pointer-events:auto;cursor:pointer}
-.cmt-marker .pin{width:22px;height:22px;border-radius:50% 50% 50% 3px;background:#F5A623;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.32);display:flex;align-items:center;justify-content:center;transform:rotate(45deg)}
-.cmt-marker .pin b{transform:rotate(-45deg);color:#fff;font:700 11px 'IBM Plex Mono',monospace}
+.cmt-marker{position:absolute;transform:translate(-50%,-50%);pointer-events:auto;cursor:pointer}
+.cmt-marker .pin{width:22px;height:22px;border-radius:50% 50% 50% 3px;background:#F5A623;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.32);display:flex;align-items:center;justify-content:center}
+.cmt-marker.circle .pin{border-radius:50%!important;transform:none!important}
+.cmt-marker .pin b{color:#fff;font:700 11px 'IBM Plex Mono',monospace}
 .cmt-marker.resolved .pin{background:#9AA0A8}
 .cmt-marker.active .pin{outline:2px solid #2563a8;outline-offset:2px}
 body.cmt-placing #svg,body.cmt-placing #svg *{cursor:default!important}
@@ -83,14 +84,25 @@ window.Comments = (function () {
 
   const markerPos = a => cfg.project(a.x, a.y);
 
+  function markerRot(anchor, p) {   // rotation (deg) so the pin points at anchor.tx/ty, or null
+    if (anchor.tx == null) return null;
+    const tp = cfg.project(anchor.tx, anchor.ty);
+    return Math.atan2(tp.sy - p.sy, tp.sx - p.sx) * 180 / Math.PI - 135;
+  }
+  function markerHtml(cls, p, rot, inner, id, title) {
+    const pt = rot != null ? ` style="transform:rotate(${rot}deg)"` : '';
+    const bt = rot != null ? ` style="transform:rotate(${-rot}deg)"` : '';   // keep the number upright
+    return `<div class="cmt-marker${rot == null ? ' circle' : ''}${cls}"${id ? ` data-id="${id}"` : ''} style="left:${p.sx}px;top:${p.sy}px"${title ? ` title="${title}"` : ''}><div class="pin"${pt}><b${bt}>${inner}</b></div></div>`;
+  }
   function renderMarkers() {
     const layer = $('cmt-layer'); if (!layer) return;
     let h = '';
     for (const t of threads) {
       const p = markerPos(t.anchor); if (!p) continue;
-      h += `<div class="cmt-marker${t.resolved ? ' resolved' : ''}${t.id === openId ? ' active' : ''}" data-id="${t.id}" style="left:${p.sx}px;top:${p.sy}px" title="${esc((t.anchor.label || 'Comment') + ' · ' + ((t.messages[0] || {}).text || ''))}"><div class="pin"><b>${t.messages.length || 1}</b></div></div>`;
+      h += markerHtml((t.resolved ? ' resolved' : '') + (t.id === openId ? ' active' : ''), p, markerRot(t.anchor, p),
+        t.messages.length || 1, t.id, esc((t.anchor.label || 'Comment') + ' · ' + ((t.messages[0] || {}).text || '')));
     }
-    if (draft) { const p = markerPos(draft.anchor); if (p) h += `<div class="cmt-marker active" style="left:${p.sx}px;top:${p.sy}px"><div class="pin"><b>+</b></div></div>`; }
+    if (draft) { const p = markerPos(draft.anchor); if (p) h += markerHtml(' active', p, markerRot(draft.anchor, p), '+', '', ''); }
     layer.innerHTML = h;
     [...layer.querySelectorAll('.cmt-marker[data-id]')].forEach(el => el.onclick = ev => { ev.stopPropagation(); openThread(el.dataset.id); });
   }
