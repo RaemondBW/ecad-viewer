@@ -470,11 +470,11 @@ if(!MODALMODE) Comments.init({
   resolveAnchor:(cx,cy)=>{
     const r=svg.getBoundingClientRect();
     const bx=(cx-r.left-view.x)/view.k, by=y1-((cy-r.top-view.y)/view.k);
-    const tol=40/view.k;                       // snap radius (~40px) to the closest item
+    const tol=90/view.k;                       // how near an item must be to point at it
     const pad=nearestPad(bx,by), tr=nearestTrace(bx,by);
-    const pD=pad?pad.d:1e30, tD=tr?tr.d:1e30;
-    if(pD<=tD && pD<tol) return {kind:'pad',x:pad.x,y:pad.y,ref:pad.ref,label:'Part '+pad.ref};
-    if(tD<tol){ const xi=xnetOfNet(new Set([tr.root])); return {kind:'net',x:tr.x,y:tr.y,ref:(xi!=null?'xnet'+xi:null),label:'Net'+(xi!=null&&XP?(' '+(XP.xnets[xi].name||xi)):'')}; }
+    const pD=pad?pad.d:1e30, tD=tr?tr.d:1e30;   // anchor stays at the cursor (bx,by); tx/ty is the item to point at
+    if(pD<=tD && pD<tol) return {kind:'pad',x:bx,y:by,ref:pad.ref,label:'Part '+pad.ref,tx:pad.x,ty:pad.y};
+    if(tD<tol){ const xi=xnetOfNet(new Set([tr.root])); return {kind:'net',x:bx,y:by,ref:(xi!=null?'xnet'+xi:null),label:'Net'+(xi!=null&&XP?(' '+(XP.xnets[xi].name||xi)):''),tx:tr.x,ty:tr.y}; }
     return {kind:'point',x:bx,y:by,label:'Open space'};
   }
 });

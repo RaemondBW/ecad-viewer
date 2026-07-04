@@ -24,12 +24,11 @@ CSS = r"""
 .cmt-marker .pin b{transform:rotate(-45deg);color:#fff;font:700 11px 'IBM Plex Mono',monospace}
 .cmt-marker.resolved .pin{background:#9AA0A8}
 .cmt-marker.active .pin{outline:2px solid #2563a8;outline-offset:2px}
-body.cmt-placing #svg,body.cmt-placing #svg *{cursor:url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='30'%20height='30'%20viewBox='0%200%2030%2030'%3E%3Cpath%20d='M5%204h20a3%203%200%200%201%203%203v9a3%203%200%200%201-3%203H14l-6%206v-6H5a3%203%200%200%201-3-3V7a3%203%200%200%201%203-3z'%20fill='%23F5A623'%20stroke='%23fff'%20stroke-width='2'%20stroke-linejoin='round'/%3E%3Ccircle%20cx='11'%20cy='11.5'%20r='1.6'%20fill='%23fff'/%3E%3Ccircle%20cx='15'%20cy='11.5'%20r='1.6'%20fill='%23fff'/%3E%3Ccircle%20cx='19'%20cy='11.5'%20r='1.6'%20fill='%23fff'/%3E%3C/svg%3E") 8 25,crosshair!important}
-#cmt-ghost{position:absolute;transform:translate(-50%,-100%);pointer-events:none;z-index:17}
-#cmt-ghost .pin{width:22px;height:22px;border-radius:50% 50% 50% 3px;background:#F5A623;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center;transform:rotate(45deg);opacity:.75}
-#cmt-ghost.point .pin{background:#8FA0B0}
-#cmt-ghost .pin b{transform:rotate(-45deg);color:#fff;font:700 12px 'IBM Plex Mono',monospace}
-#cmt-ghost .cmt-glabel{position:absolute;left:15px;top:-1px;white-space:nowrap;background:#221F1A;color:#fff;font:11px 'IBM Plex Mono',monospace;padding:2px 7px;border-radius:5px}
+body.cmt-placing #svg,body.cmt-placing #svg *{cursor:default!important}
+#cmt-ghost{position:absolute;transform:translate(-50%,-50%);pointer-events:none;z-index:17}
+#cmt-ghost svg{display:block;overflow:visible;filter:drop-shadow(0 1px 2px rgba(0,0,0,.35))}
+#cmt-ghost .cmt-ring{fill:rgba(245,166,35,.15);stroke:#F5A623;stroke-width:2.5}
+#cmt-ghost .cmt-needle{fill:#F5A623}
 .tbtn.on,#cmt-btn.on{background:#F5A623;border-color:#D98E12;color:#fff}
 #cmt-panel{position:absolute;width:306px;max-height:78%;display:none;flex-direction:column;background:#fff;border:1px solid #E0DCD1;border-radius:12px;box-shadow:0 16px 40px rgba(20,16,8,.24);z-index:41;overflow:hidden;font-family:'IBM Plex Sans',system-ui,sans-serif}
 #cmt-panel .cmt-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 10px 9px 13px;border-bottom:1px solid #EEE9DE;font-size:12px}
@@ -159,18 +158,20 @@ window.Comments = (function () {
         p.addEventListener('pointerdown', e => e.stopPropagation());
         p.addEventListener('click', e => e.stopPropagation());
       }
-      if (!$('cmt-ghost')) {   // live preview of the item a click would attach to
+      if (!$('cmt-ghost')) {   // a ring at the cursor; a pointer rotates toward the nearest item
         // (append to the stage, not #cmt-layer, since renderMarkers() rewrites that layer)
         const g = document.createElement('div'); g.id = 'cmt-ghost'; g.style.display = 'none';
-        g.innerHTML = '<div class="pin"><b>+</b></div><div class="cmt-glabel"></div>'; st.appendChild(g);
+        g.innerHTML = '<svg width="40" height="40" viewBox="-20 -20 40 40"><circle class="cmt-ring" r="10"/><g class="cmt-needle"><path d="M0,-14 L-4.5,-6 L4.5,-6 Z"/></g></svg>';
+        st.appendChild(g);
       }
       config.svg.addEventListener('pointermove', e => {
         if (!placing) return;
         const a = cfg.resolveAnchor(e.clientX, e.clientY); if (!a) { hideGhost(); return; }
-        const p = cfg.project(a.x, a.y), g = $('cmt-ghost'); if (!g) return;
-        g.style.left = p.sx + 'px'; g.style.top = p.sy + 'px'; g.style.display = 'block';
-        g.classList.toggle('point', a.kind === 'point');
-        g.querySelector('.cmt-glabel').textContent = a.label || 'Open space';
+        const c = cfg.project(a.x, a.y), g = $('cmt-ghost'); if (!g) return;
+        g.style.left = c.sx + 'px'; g.style.top = c.sy + 'px'; g.style.display = 'block';
+        const needle = g.querySelector('.cmt-needle');
+        if (a.tx != null) { const t = cfg.project(a.tx, a.ty); needle.style.display = ''; needle.setAttribute('transform', 'rotate(' + (Math.atan2(t.sy - c.sy, t.sx - c.sx) * 180 / Math.PI + 90) + ')'); }
+        else needle.style.display = 'none';
       });
       config.svg.addEventListener('pointerleave', () => hideGhost());
       if (config.button) config.button.onclick = () => setPlacing(!placing);
