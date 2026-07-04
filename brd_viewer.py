@@ -344,10 +344,10 @@ function pickTraceNet(bx,by){
 function boardXY(e){ const r=svg.getBoundingClientRect(); const sx=(e.clientX-r.left-view.x)/view.k, sy=(e.clientY-r.top-view.y)/view.k; return [sx, y1-sy]; }
 // nearest pad / trace to a board point — used to snap a comment to the closest item
 function _closestOnSeg(px,py,ax,ay,bx,by){ const dx=bx-ax,dy=by-ay,l2=dx*dx+dy*dy; let t=l2?((px-ax)*dx+(py-ay)*dy)/l2:0; t=Math.max(0,Math.min(1,t)); return [ax+t*dx,ay+t*dy]; }
-function nearestPad(bx,by){ let bd=1e30,best=null;   // distance to the pad rect (0 if inside)
+function nearestPad(bx,by){ let bd=1e30,best=null;   // nearest by pad rect; point at the PART centre
   for(const pt of M.parts){ if(hiddenLayers.has(pt.side?_LN[_LN.length-1]:_LN[0])) continue;
     for(const pd of pt.pads){ const dx=Math.max(pd[0]-bx,0,bx-pd[2]),dy=Math.max(pd[1]-by,0,by-pd[3]),d=dx*dx+dy*dy;
-      if(d<bd){bd=d;best={ref:pt.ref,x:(pd[0]+pd[2])/2,y:(pd[1]+pd[3])/2};} } }
+      if(d<bd){bd=d;best={ref:pt.ref,x:pt.x,y:pt.y};} } }   // pt.x/pt.y = pad centroid (component centre)
   return best?{...best,d:Math.sqrt(bd)}:null; }
 function nearestTrace(bx,by){ const C=M.copper; let bd=1e30,bi=-1,cx=0,cy=0;
   for(let i=0;i<C.length;i+=6){ if(hiddenLayers.has(C[i+4])) continue; const q=_closestOnSeg(bx,by,C[i],C[i+1],C[i+2],C[i+3]),dx=bx-q[0],dy=by-q[1],d=dx*dx+dy*dy; if(d<bd){bd=d;bi=i;cx=q[0];cy=q[1];} }
