@@ -28,6 +28,7 @@ body.cmt-placing #svg,body.cmt-placing #svg *{cursor:default!important}
 #cmt-ghost{position:absolute;transform:translate(-50%,-50%);pointer-events:none;z-index:17}
 #cmt-ghost svg{display:block;overflow:visible;filter:drop-shadow(0 1px 2px rgba(0,0,0,.35))}
 #cmt-ghost .cmt-ring{fill:rgba(245,166,35,.15);stroke:#F5A623;stroke-width:2.5}
+#cmt-ghost .cmt-dot{fill:#F5A623;stroke:#fff;stroke-width:1.5}
 #cmt-ghost .cmt-needle{fill:#F5A623}
 .tbtn.on,#cmt-btn.on{background:#F5A623;border-color:#D98E12;color:#fff}
 #cmt-panel{position:absolute;width:306px;max-height:78%;display:none;flex-direction:column;background:#fff;border:1px solid #E0DCD1;border-radius:12px;box-shadow:0 16px 40px rgba(20,16,8,.24);z-index:41;overflow:hidden;font-family:'IBM Plex Sans',system-ui,sans-serif}
@@ -161,7 +162,7 @@ window.Comments = (function () {
       if (!$('cmt-ghost')) {   // a ring at the cursor; a pointer rotates toward the nearest item
         // (append to the stage, not #cmt-layer, since renderMarkers() rewrites that layer)
         const g = document.createElement('div'); g.id = 'cmt-ghost'; g.style.display = 'none';
-        g.innerHTML = '<svg width="40" height="40" viewBox="-20 -20 40 40"><circle class="cmt-ring" r="10"/><g class="cmt-needle"><path d="M0,-14 L-4.5,-6 L4.5,-6 Z"/></g></svg>';
+        g.innerHTML = '<svg width="40" height="40" viewBox="-20 -20 40 40"><circle class="cmt-ring" r="10"/><g class="cmt-needle"><path d="M0,-14 L-4.5,-6 L4.5,-6 Z"/></g><circle class="cmt-dot" r="4.5"/></svg>';
         st.appendChild(g);
       }
       config.svg.addEventListener('pointermove', e => {
