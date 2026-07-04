@@ -560,18 +560,46 @@ const XQP = new URLSearchParams(location.search), XMODAL = XQP.get('modal') === 
 const schToXnet = new Map();
 if (XP && XP.xnets) XP.xnets.forEach((xn, i) => { if (xn.sch != null && !schToXnet.has(xn.sch)) schToXnet.set(xn.sch, i); });
 const layoutRefs = new Set((XP && XP.layoutRefs) || []);
-// a "Layout" section (iframe preview + open-full link) for the details card.
-// kind: 'ref' (component) | 'xnet' (net index); returns '' when no layout link.
-function layoutPreview(kind, id) {
-  if (!XP || !XP.companion || id == null || id === '') return '';
-  if (kind === 'ref' && XP.layoutRefs && !layoutRefs.has(id))
-    return `<div style="padding:12px 16px;color:#A19B8E;font-size:12px;border-top:1px solid #EAE6DA">Not placed in this layout.</div>`;
-  const q = kind + '=' + encodeURIComponent(id);
-  return `<div style="padding:8px 8px 12px;border-top:1px solid #EAE6DA">` +
-    `<div style="display:flex;align-items:center;justify-content:space-between;padding:2px 8px 6px">` +
-    `<span style="font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#8B8578">Layout</span>` +
-    `<a href="${XP.companion}?${q}" target="_blank" style="font-size:10.5px;color:#2563a8;text-decoration:none">Open full ↗</a></div>` +
-    `<iframe src="${XP.companion}?${q}&modal=1" loading="lazy" style="width:100%;height:190px;border:1px solid #E0DCD1;border-radius:8px;background:#0e0c08"></iframe></div>`;
+// The details card holds ONE persistent layout iframe at its top, driven by
+// postMessage — hovering across parts updates the preview live instead of
+// reloading pcb.html each time. ensureShell() builds the fixed frame + header
+// once; renderInspector fills #ins-card and calls driveFrame() to retarget it.
+let _frameReady = false, _framePending = null, _frameTarget = null;
+function ensureShell() {
+  const ins = $('inspector');
+  if (ins.querySelector('#ins-frame')) return;
+  ins.innerHTML =
+    `<div id="ins-head" style="display:flex;align-items:center;justify-content:space-between;padding:10px 10px 6px 16px;cursor:move;user-select:none">` +
+      `<span id="ins-label" style="font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#8B8578">Part</span>` +
+      `<span style="display:flex;align-items:center;gap:10px">` +
+        `<a id="ins-open" target="_blank" style="font-size:10.5px;color:#2563a8;text-decoration:none;display:none">Open full ↗</a>` +
+        `<button id="ins-x" class="iconx" style="cursor:pointer">&times;</button></span></div>` +
+    `<div id="ins-preview" style="display:none;border-bottom:1px solid #EAE6DA"><iframe id="ins-frame"` +
+      (XP && XP.companion ? ` src="${XP.companion}?modal=1"` : '') +
+      ` style="width:100%;height:190px;border:0;display:block;background:#0e0c08"></iframe></div>` +
+    `<div id="ins-card"></div>`;
+  $('ins-x').addEventListener('click', closeSel);
+  const fr = $('ins-frame');
+  fr.addEventListener('load', () => { _frameReady = true; if (_framePending) { fr.contentWindow.postMessage(_framePending, '*'); _framePending = null; } });
+  const head = $('ins-head');
+  head.addEventListener('pointerdown', e => {
+    if (e.target.closest('#ins-x') || e.target.closest('a')) return;
+    const st = { x: e.clientX, y: e.clientY, l: ins.offsetLeft, t: ins.offsetTop };
+    head.setPointerCapture(e.pointerId);
+    const mv = ev => { ins.style.left = (st.l + ev.clientX - st.x) + 'px'; ins.style.top = (st.t + ev.clientY - st.y) + 'px'; ins.style.right = 'auto'; ins.style.bottom = 'auto'; };
+    const up = () => { head.removeEventListener('pointermove', mv); head.removeEventListener('pointerup', up); };
+    head.addEventListener('pointermove', mv); head.addEventListener('pointerup', up);
+  });
+}
+function driveFrame(target) {   // target: {ref}|{xnet} with .href, or null to hide the preview
+  const prev = $('ins-preview'), open = $('ins-open'), fr = $('ins-frame');
+  if (!target || !XP || !XP.companion) { prev.style.display = 'none'; open.style.display = 'none'; return; }
+  prev.style.display = 'block'; open.style.display = ''; open.href = target.href;
+  const key = target.ref != null ? 'r' + target.ref : 'n' + target.xnet;
+  if (key !== _frameTarget) { _frameTarget = key;
+    const payload = { type: 'xprobe', ref: target.ref, xnet: target.xnet };
+    if (_frameReady) fr.contentWindow.postMessage(payload, '*'); else _framePending = payload;
+  }
 }
 
 let cur = 0, pinNets = [], selDes = null, selNet = null, cardPinned = false, q = '', searchFocus = false;
@@ -1041,49 +1069,46 @@ function positionInspectorNear(des) {
   ins.style.left = (left - row.left) + 'px'; ins.style.top = (top - row.top) + 'px';
   ins.style.right = 'auto'; ins.style.bottom = 'auto';
 }
-function renderNetCard(ins) {
+function renderNetCard() {
+  const ins = $('inspector'); ensureShell(); ins.style.display = 'block';
+  ins.style.left = 'auto'; ins.style.right = '14px'; ins.style.top = '14px'; ins.style.bottom = 'auto';
+  $('ins-label').textContent = 'Net';
   const k = selNet, xi = schToXnet.has(k) ? schToXnet.get(k) : null;
   const also = [...(netSheets.get(k) || [])].filter(i => i !== cur).map(i => sheetLabel(i));
-  ins.style.display = 'block';
-  ins.style.left = 'auto'; ins.style.right = '14px'; ins.style.top = '14px'; ins.style.bottom = 'auto';
-  ins.innerHTML =
-    `<div id="ins-head" style="display:flex;align-items:center;justify-content:space-between;padding:12px 10px 6px 16px;user-select:none">` +
-    `<span style="font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#8B8578">Net</span>` +
-    `<button id="ins-x" class="iconx" style="cursor:pointer">&times;</button></div>` +
-    (xi != null ? layoutPreview('xnet', xi) : '') +
-    `<div style="padding:0 16px 12px;border-bottom:1px solid #EAE6DA">` +
+  driveFrame(xi != null && XP && XP.companion ? { xnet: xi, href: XP.companion + '?xnet=' + xi } : null);
+  $('ins-card').innerHTML =
+    `<div style="padding:8px 16px 12px;border-bottom:1px solid #EAE6DA">` +
     `<div style="font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:600;color:#221F1A;word-break:break-all">${esc(netName(k) || k)}</div>` +
     (also.length ? `<div style="font-size:10.5px;color:#A19B8E;font-family:'IBM Plex Mono',monospace;margin-top:5px">also on ${esc(also.join(', '))}</div>` : '') +
     `</div>` +
     (xi == null ? `<div style="padding:14px 16px;color:#A19B8E;font-size:12px">No matched net in the layout.</div>` : '');
-  $('ins-x').addEventListener('click', closeSel);
 }
 function renderInspector() {
   const ins = $('inspector');
-  if (selNet) return renderNetCard(ins);
-  if (!selDes) { ins.style.display = 'none'; ins.innerHTML = ''; return; }
+  if (selNet) return renderNetCard();
+  if (!selDes) { ins.style.display = 'none'; return; }
   const order = [cur, ...M.sheets.map((_, i) => i).filter(i => i !== cur)];
   let sel = null, si = cur;
   for (const i of order) { const p = M.sheets[i].parts.find(x => x.des === selDes); if (p) { sel = p; si = i; break; } }
-  if (!sel) { ins.style.display = 'none'; ins.innerHTML = ''; return; }
+  if (!sel) { ins.style.display = 'none'; return; }
+  ensureShell(); ins.style.display = 'block';
+  $('ins-label').textContent = 'Part';
+  const inLayout = !(XP && XP.layoutRefs) || layoutRefs.has(sel.des);
+  driveFrame(inLayout && XP && XP.companion ? { ref: sel.des, href: XP.companion + '?ref=' + encodeURIComponent(sel.des) } : null);
   const diffNote = diffReason(selDes).trim();
   const pins = (sel.pins || []).map(pin => ({
     num: pin[3] || '·', name: pin[4] || '—',
     net: pin[2] ? (netName(pin[2]) || pin[2]) : '(unconnected)', key: pin[2] || ''
   }));
-  ins.style.display = 'block';
-  ins.innerHTML =
-    `<div id="ins-head" style="display:flex;align-items:center;justify-content:space-between;padding:12px 10px 6px 16px;cursor:move;user-select:none">` +
-    `<span style="font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#8B8578">Part</span>` +
-    `<button id="ins-x" class="iconx" style="cursor:pointer">&times;</button></div>` +
-    (cardPinned ? layoutPreview('ref', sel.des) : '') +
-    `<div style="padding:0 16px 12px;border-bottom:1px solid #EAE6DA">` +
+  $('ins-card').innerHTML =
+    `<div style="padding:8px 16px 12px;border-bottom:1px solid #EAE6DA">` +
     `<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">` +
     `<span style="font-family:'IBM Plex Mono',monospace;font-size:20px;font-weight:600;color:#221F1A">${esc(sel.des)}</span>` +
     (sel.val ? `<span style="font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:600;color:#C2410C">${esc(sel.val)}</span>` : '') +
     `</div>` +
     `<div style="font-size:11.5px;color:#6E6A60;margin-top:3px;word-break:break-word;line-height:1.35">${esc(sel.pkg || '—')}</div>` +
     `<div style="font-size:10.5px;color:#A19B8E;font-family:'IBM Plex Mono',monospace;margin-top:5px">${esc(sheetLabel(si))}</div>` +
+    (inLayout ? '' : `<div style="margin-top:6px;font-size:11px;color:#A19B8E">Not placed in this layout.</div>`) +
     (diffNote ? `<div style="margin-top:6px;font-size:11px;color:#9A6700;font-family:'IBM Plex Mono',monospace;white-space:pre-line">${esc(diffNote)}</div>` : '') +
     `</div>` +
     `<div style="padding:8px 8px 14px">` +
@@ -1094,7 +1119,6 @@ function renderInspector() {
       `<span style="min-width:0"><span style="display:block;font-size:11.5px;color:#221F1A;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(pn.name)}</span>` +
       `<span style="display:block;font-family:'IBM Plex Mono',monospace;font-size:10px;color:#4338CA;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(pn.net)}</span></span></div>`
     ).join('') + `</div>`;
-  $('ins-x').addEventListener('click', closeSel);
   [...ins.querySelectorAll('.pinrow')].forEach(el => {
     const k = pins[+el.dataset.i].key;
     el.addEventListener('click', () => { if (k) togglePin(k); });
@@ -1102,16 +1126,6 @@ function renderInspector() {
     el.addEventListener('mouseleave', clearPreview);
   });
   if (si === cur) positionInspectorNear(sel.des);   // float next to the part
-  // drag the floating card by its header
-  const head = $('ins-head');
-  head.addEventListener('pointerdown', e => {
-    if (e.target.closest('#ins-x')) return;
-    const st = { x: e.clientX, y: e.clientY, l: ins.offsetLeft, t: ins.offsetTop };
-    head.setPointerCapture(e.pointerId);
-    const mv = ev => { ins.style.left = (st.l + ev.clientX - st.x) + 'px'; ins.style.top = (st.t + ev.clientY - st.y) + 'px'; ins.style.right = 'auto'; ins.style.bottom = 'auto'; };
-    const up = () => { head.removeEventListener('pointermove', mv); head.removeEventListener('pointerup', up); };
-    head.addEventListener('pointermove', mv); head.addEventListener('pointerup', up);
-  });
 }
 function renderBom() {
   const bom = $('bom');

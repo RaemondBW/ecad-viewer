@@ -445,19 +445,25 @@ if(MODALMODE) document.body.classList.add('modal');
 if(modal){ document.getElementById('xclose').onclick=hideModal;
   modal.addEventListener('click',ev=>{ if(ev.target===modal) hideModal(); }); }
 render(); fit();
-// apply cross-probe URL params AFTER full load — a load-time resize re-runs fit()
-// and would otherwise clobber the zoom target
-function applyParams(){
-  const xnet=QP.get('xnet'), ref=QP.get('ref');
-  if(xnet!==null && xnetRoots[+xnet]){ pinnedNet=xnetRoots[+xnet]; updateHighlight(); zoomToBox(XP.xnets[+xnet].bbox,0.5); }
-  else if(ref){
-    pinnedRef=ref;
-    const p=M.parts.find(q=>q.ref===ref);        // show only the layer the part sits on
-    if(p){ const keep=p.side?_LN[_LN.length-1]:_LN[0];
-      hiddenLayers.clear(); _LN.forEach(l=>{ if(l!==keep) hiddenLayers.add(l); }); renderLayers(); }
-    render(); zoomToBox(refBox(ref),0.25,12000);   // close in on the part
-  }
+// apply a cross-probe target (from ?xnet/?ref on load, or a postMessage from an
+// embedding parent so a live preview can update without reloading the page).
+let _curKeep=undefined;                            // currently isolated layer (null=all shown)
+function applyTarget(t){
+  t=t||{};
+  pinnedNet=null; pinnedRef=null; hoverNet=null; hoverRef=null;
+  let keep=null, part=null;
+  if(t.ref){ part=M.parts.find(q=>q.ref===t.ref); if(part){ pinnedRef=t.ref; keep=part.side?_LN[_LN.length-1]:_LN[0]; } }
+  else if(t.xnet!=null && xnetRoots[+t.xnet]){ pinnedNet=xnetRoots[+t.xnet]; }
+  if(keep!==_curKeep){                             // layer visibility changed → full re-render
+    _curKeep=keep; hiddenLayers.clear(); if(keep!=null) _LN.forEach(l=>{ if(l!==keep) hiddenLayers.add(l); });
+    renderLayers(); render();
+  } else updateHighlight();                         // same layers → cheap overlay update
+  if(pinnedNet) zoomToBox(XP.xnets[+t.xnet].bbox,0.5);
+  else if(part) zoomToBox(refBox(t.ref),0.25,12000);
 }
+function applyParams(){ const xnet=QP.get('xnet'), ref=QP.get('ref');
+  if(xnet!==null) applyTarget({xnet:+xnet}); else if(ref) applyTarget({ref}); }
+window.addEventListener('message',e=>{ const d=e.data; if(d&&d.type==='xprobe') applyTarget(d); });
 if(QP.get('xnet')!==null || QP.get('ref')){
   if(document.readyState==='complete') setTimeout(applyParams,40);
   else window.addEventListener('load',()=>setTimeout(applyParams,40));
