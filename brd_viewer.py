@@ -77,6 +77,21 @@ def _cap_to_pitch(pads):
     return out
 
 
+def _drop_outlier_pads(pads):
+    """Drop pads that sit far from the component's pad cluster — a few parts get a
+    spurious pad on the far side of the board (a mis-parented 0x32), which would
+    otherwise blow up the footprint bbox (and the zoom-to-part preview)."""
+    if len(pads) < 3:
+        return pads
+    cx = sorted((p[0] + p[2]) / 2 for p in pads)[len(pads) // 2]     # robust centre (median)
+    cy = sorted((p[1] + p[3]) / 2 for p in pads)[len(pads) // 2]
+    dist = lambda p: (((p[0] + p[2]) / 2 - cx) ** 2 + ((p[1] + p[3]) / 2 - cy) ** 2) ** 0.5
+    med = sorted(dist(p) for p in pads)[len(pads) // 2]
+    thr = max(med * 6, 400000)                                        # keep genuine large parts (BGAs)
+    kept = [p for p in pads if dist(p) <= thr]
+    return kept if kept else pads
+
+
 def build(brd_path, bom_path=None):
     d = Path(brd_path).read_bytes()
     strings = bc.parse_strings(d)
@@ -86,6 +101,7 @@ def build(brd_path, bom_path=None):
     for ref, (x, y, side, rot, pads) in placements.items():
         pre = re.match(r"^[A-Za-z]+", ref)
         t = pre.group()[0].upper() if pre else "?"
+        pads = _drop_outlier_pads(pads)     # drop mis-parented pads across the board
         pads = _cap_to_pitch(pads)          # keep pads within their neighbour pitch
         # label at the pad centroid (a footprint origin can be far from its pads)
         if pads:
