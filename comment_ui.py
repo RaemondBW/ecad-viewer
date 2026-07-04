@@ -71,6 +71,8 @@ window.Comments = (function () {
       addReply: async (id, m) => { const a = read(); const t = a.find(x => x.id === id); if (t) { t.messages.push(m); write(a); } return m; },
       update: async (id, p) => { const a = read(); const t = a.find(x => x.id === id); if (t) { Object.assign(t, p); write(a); } },
       remove: async id => write(read().filter(x => x.id !== id)),
+      // sync thread count for an arbitrary context (for per-page badges)
+      countFor: c => { try { return JSON.parse(localStorage.getItem('xcomments:' + c) || '[]').length; } catch (e) { return 0; } },
     };
   }
 
@@ -80,6 +82,7 @@ window.Comments = (function () {
     threads = await store.list();
     renderMarkers();
     if (openId) { const t = threads.find(x => x.id === openId); if (t) openThread(openId); else closePanel(); }
+    if (cfg && cfg.onChange) cfg.onChange();
   }
 
   const markerPos = a => cfg.project(a.x, a.y);
@@ -206,6 +209,7 @@ window.Comments = (function () {
     isPlacing: () => placing,
     place(cx, cy) { if (!placing) return; const a = cfg.resolveAnchor(cx, cy); if (!a) return; setPlacing(false); openDraft(a); },
     reproject() { renderMarkers(); },
+    countFor(ctx) { return store && store.countFor ? store.countFor(ctx) : 0; },   // thread count for a context
     setContext() { closePanel(); reload(); },   // call after the storage context (e.g. sheet) changes
     setStore(s) { store = s; reload(); },
     toggle() { setPlacing(!placing); },

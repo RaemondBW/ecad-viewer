@@ -678,6 +678,7 @@ function init() {
     Comments.init({
       context: () => 'sch:' + (M.name || '') + ':' + cur,
       svg: svgEl, stage: $('stage'), button: $('cmt-btn'),
+      onChange: () => renderSidebar(),   // refresh per-sheet comment counts
       project: (x, y) => ({ sx: x * view.k + view.x, sy: y * view.k + view.y }),
       resolveAnchor: (cx, cy) => {
         const r = svgEl.getBoundingClientRect();
@@ -1028,13 +1029,15 @@ function renderSidebar() {
         const dots = pinNets.filter(p => (netSheets.get(p.key) || new Set()).has(i))
           .map(p => `<span title="${esc(netName(p.key))}" style="width:6px;height:6px;border-radius:50%;background:${p.color};display:inline-block;flex-shrink:0"></span>`).join('');
         const th = thumbs[i] ? `background-image:url(&quot;${thumbs[i]}&quot;);` : '';
+        const cc = (window.Comments && Comments.countFor) ? Comments.countFor('sch:' + (M.name || '') + ':' + i) : 0;
+        const cbadge = cc ? `<span title="${cc} comment${cc > 1 ? 's' : ''}" style="display:inline-flex;align-items:center;gap:2px;font-size:9.5px;font-weight:700;color:#fff;background:#F5A623;border-radius:8px;padding:0 6px;line-height:15px;font-family:'IBM Plex Mono',monospace">&#128172; ${cc}</span>` : '';
         h += `<div class="pgrow${active ? ' active' : ''}" data-i="${i}">` +
           `<div style="width:62px;height:42px;background:#FFFFFF;${th}background-size:contain;background-repeat:no-repeat;background-position:center;border:1px solid ${active ? '#C9A97F' : '#E4E0D3'};border-radius:4px;flex-shrink:0"></div>` +
           `<div style="min-width:0;flex:1">` +
           `<div style="font-size:12px;font-weight:500;color:#221F1A;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.page || s.view)}</div>` +
           `<div style="display:flex;align-items:center;gap:5px;margin-top:1px">` +
           `<span style="font-size:10px;color:#A19B8E;font-family:'IBM Plex Mono',monospace">${s.parts.length} parts</span>` +
-          dots +
+          cbadge + dots +
           `</div></div></div>`;
       }
     }
