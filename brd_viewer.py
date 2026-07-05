@@ -324,7 +324,23 @@ const _padNets=[], _padMain=[];   // per pad: Set of net roots, and its dominant
     _padMain[gi]=best; gi++;
   }
 })();
-function traceRoot(i){ const C=M.copper; return _find(nqk(C[i],C[i+1])+'@'+C[i+4]); }
+// ---- perf caches (roots are static after buildNets) ----
+// per-segment / per-via union-find root, so hover highlight is O(1) lookups; and a
+// spatial grid of segments so hover-picking scans only nearby copper, not all of it.
+const _segRoot=[], _viaRoot=[];
+const PG=20000, _pgrid=new Map();
+(function buildCaches(){
+  const C=M.copper, V=M.vias||[];
+  for(let i=0;i<C.length;i+=6){
+    _segRoot[i/6]=_find(nqk(C[i],C[i+1])+'@'+C[i+4]);
+    const x0=Math.min(C[i],C[i+2]),x1=Math.max(C[i],C[i+2]),y0=Math.min(C[i+1],C[i+3]),y1=Math.max(C[i+1],C[i+3]);
+    for(let gx=Math.floor(x0/PG);gx<=Math.floor(x1/PG);gx++) for(let gy=Math.floor(y0/PG);gy<=Math.floor(y1/PG);gy++){
+      const k=gx+','+gy; let a=_pgrid.get(k); if(!a){a=[];_pgrid.set(k,a);} a.push(i); }
+  }
+  for(let i=0;i<V.length;i+=3) _viaRoot[i/3]=_find(nqk(V[i],V[i+1])+'@'+_L0);
+})();
+const _seen=new Int32Array((M.copper.length/6|0)+1); let _gen=0;
+function traceRoot(i){ return _segRoot[i/6]; }
 function viaRoot(x,y){ return _find(nqk(x,y)+'@'+_L0); }
 let pinnedNet=null, hoverNet=null;   // net highlight: each a Set of net roots, or null
 let pinnedRef=null, hoverRef=null;   // part highlight: a component refdes, or null
@@ -341,7 +357,7 @@ function updateHighlight(){
     const w=Math.max(C[i+5],minW); (byW[w]=byW[w]||[]).push(`M${C[i]} ${flipY(C[i+1])}L${C[i+2]} ${flipY(C[i+3])}`); }
   for(const w in byW) h+=`<path class="hl" d="${byW[w].join('')}" stroke-width="${+w*1.7}"/>`;
   const V=M.vias||[];
-  if(net) for(let i=0;i<V.length;i+=3) if(inNet(net,viaRoot(V[i],V[i+1]))) h+=`<circle class="hlv" cx="${V[i]}" cy="${flipY(V[i+1])}" r="${V[i+2]}"/>`;
+  if(net) for(let i=0;i<V.length;i+=3) if(inNet(net,_viaRoot[i/3])) h+=`<circle class="hlv" cx="${V[i]}" cy="${flipY(V[i+1])}" r="${V[i+2]}"/>`;
   let gi=0;
   for(const pt of M.parts){ const hid=hiddenLayers.has(pt.side?_LN[_LN.length-1]:_LN[0]);
     const isRef=aref!=null && pt.ref===aref;
@@ -354,9 +370,12 @@ function updateHighlight(){
 }
 function _distSeg(px,py,ax,ay,bx,by){ const dx=bx-ax,dy=by-ay,l2=dx*dx+dy*dy; let t=l2?((px-ax)*dx+(py-ay)*dy)/l2:0; t=Math.max(0,Math.min(1,t)); return Math.hypot(px-(ax+t*dx),py-(ay+t*dy)); }
 function pickTraceNet(bx,by){
-  const C=M.copper; let best=-1,bd=1e18;
-  for(let i=0;i<C.length;i+=6){ if(hiddenLayers.has(C[i+4])) continue; const dd=_distSeg(bx,by,C[i],C[i+1],C[i+2],C[i+3]); if(dd<bd){bd=dd;best=i;} }
-  return (best>=0 && bd < 14/view.k) ? traceRoot(best) : null;   // ~14px tolerance
+  const C=M.copper, tol=14/view.k; let best=-1,bd=1e18; _gen++;   // ~14px tolerance
+  const gx0=Math.floor((bx-tol)/PG),gx1=Math.floor((bx+tol)/PG),gy0=Math.floor((by-tol)/PG),gy1=Math.floor((by+tol)/PG);
+  for(let gx=gx0;gx<=gx1;gx++) for(let gy=gy0;gy<=gy1;gy++){ const a=_pgrid.get(gx+','+gy); if(!a) continue;
+    for(const i of a){ const si=i/6; if(_seen[si]===_gen) continue; _seen[si]=_gen; if(hiddenLayers.has(C[i+4])) continue;
+      const dd=_distSeg(bx,by,C[i],C[i+1],C[i+2],C[i+3]); if(dd<bd){bd=dd;best=i;} } }
+  return (best>=0 && bd<tol) ? traceRoot(best) : null;
 }
 function boardXY(e){ const r=svg.getBoundingClientRect(); const sx=(e.clientX-r.left-view.x)/view.k, sy=(e.clientY-r.top-view.y)/view.k; return [sx, y1-sy]; }
 // nearest pad / trace to a board point — used to snap a comment to the closest item
@@ -366,8 +385,11 @@ function nearestPad(bx,by){ let bd=1e30,best=null;   // nearest by pad rect; poi
     for(const pd of pt.pads){ const dx=Math.max(pd[0]-bx,0,bx-pd[2]),dy=Math.max(pd[1]-by,0,by-pd[3]),d=dx*dx+dy*dy;
       if(d<bd){bd=d;best={ref:pt.ref,x:pt.x,y:pt.y};} } }   // pt.x/pt.y = pad centroid (component centre)
   return best?{...best,d:Math.sqrt(bd)}:null; }
-function nearestTrace(bx,by){ const C=M.copper; let bd=1e30,bi=-1,cx=0,cy=0;
-  for(let i=0;i<C.length;i+=6){ if(hiddenLayers.has(C[i+4])) continue; const q=_closestOnSeg(bx,by,C[i],C[i+1],C[i+2],C[i+3]),dx=bx-q[0],dy=by-q[1],d=dx*dx+dy*dy; if(d<bd){bd=d;bi=i;cx=q[0];cy=q[1];} }
+function nearestTrace(bx,by){ const C=M.copper, R=120/view.k; let bd=1e30,bi=-1,cx=0,cy=0; _gen++;   // only within snap range
+  const gx0=Math.floor((bx-R)/PG),gx1=Math.floor((bx+R)/PG),gy0=Math.floor((by-R)/PG),gy1=Math.floor((by+R)/PG);
+  for(let gx=gx0;gx<=gx1;gx++) for(let gy=gy0;gy<=gy1;gy++){ const a=_pgrid.get(gx+','+gy); if(!a) continue;
+    for(const i of a){ const si=i/6; if(_seen[si]===_gen) continue; _seen[si]=_gen; if(hiddenLayers.has(C[i+4])) continue;
+      const q=_closestOnSeg(bx,by,C[i],C[i+1],C[i+2],C[i+3]),dx=bx-q[0],dy=by-q[1],d=dx*dx+dy*dy; if(d<bd){bd=d;bi=i;cx=q[0];cy=q[1];} } }
   return bi<0?null:{d:Math.sqrt(bd),root:traceRoot(bi),x:cx,y:cy}; }
 // ---- cross-probe: canonical xnets <-> layout net roots, modal preview of the schematic ----
 const QP=new URLSearchParams(location.search), MODALMODE=QP.get('modal')==='1';
@@ -396,15 +418,16 @@ function crossProbeNet(net){ const xi=xnetOfNet(net); if(xi==null) return;
   const xn=XP.xnets[xi]; showModal(XP.companion+'?xnet='+xi+'&modal=1', XP.companion+'?xnet='+xi, 'Schematic · '+(xn.name||('net '+xi))); }
 function crossProbeRef(ref){ showModal(XP.companion+'?ref='+encodeURIComponent(ref)+'&modal=1', XP.companion+'?ref='+encodeURIComponent(ref), 'Schematic · '+ref); }
 function bind(){
-  scene.querySelectorAll('.pad,.comp').forEach(el=>{
-    el.addEventListener('pointerover',e=>{
-      const ref=el.dataset.ref;
-      scene.querySelectorAll('.pad,.comp').forEach(x=>{ if(x.dataset.ref===ref) x.classList.add('hot'); });
-      const ty=M.types[el.dataset.t], v=el.dataset.val;
-      tip.textContent=ref+(v?'  '+v:'')+'\n'+((ty&&ty.label)||el.dataset.t); tip.style.opacity=1; });
-    el.addEventListener('pointermove',e=>{ tip.style.left=(e.clientX+14)+'px'; tip.style.top=(e.clientY+14)+'px'; });
-    el.addEventListener('pointerout',()=>{ scene.querySelectorAll('.hot').forEach(x=>x.classList.remove('hot')); tip.style.opacity=0; });
-  });
+  // delegated once on the scene container (survives innerHTML re-renders), instead of
+  // (re-)attaching three listeners to every pad on each render.
+  if(bind._done) return; bind._done=true;
+  scene.addEventListener('pointerover',e=>{ const el=e.target.closest('.pad,.comp'); if(!el)return;
+    const ref=el.dataset.ref;
+    scene.querySelectorAll('.pad,.comp').forEach(x=>{ if(x.dataset.ref===ref) x.classList.add('hot'); });
+    const ty=M.types[el.dataset.t], v=el.dataset.val;
+    tip.textContent=ref+(v?'  '+v:'')+'\n'+((ty&&ty.label)||el.dataset.t); tip.style.opacity=1; });
+  scene.addEventListener('pointermove',e=>{ if(e.target.closest('.pad,.comp')){ tip.style.left=(e.clientX+14)+'px'; tip.style.top=(e.clientY+14)+'px'; } });
+  scene.addEventListener('pointerout',e=>{ if(!e.target.closest('.pad,.comp'))return; scene.querySelectorAll('.hot').forEach(x=>x.classList.remove('hot')); tip.style.opacity=0; });
 }
 function fit(){
   const r=svg.getBoundingClientRect(); if(!r.width) return;
