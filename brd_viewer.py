@@ -132,15 +132,23 @@ def build(brd_path, bom_path=None):
             "types": {k: {"label": v[0], "color": v[1], "hs": v[2]} for k, v in TYPES.items()}}
 
 
-def generate(brd_path, out_path, bom_path=None, xprobe=None, model=None):
-    if model is None:
-        model = build(brd_path, bom_path)
-    html = (HTML.replace("__MODEL__", json.dumps(model))
-                .replace("__XPROBE__", json.dumps(xprobe))
+def generate(brd_path, out_path, bom_path=None, xprobe=None, model=None, shell=False):
+    # shell=True: data-free viewer that fetches the board after sign-in (hosted, private).
+    if shell:
+        boot, fb = "", comment_ui.shell_bootstrap("schematic-viewer", "layout")
+    else:
+        if model is None:
+            model = build(brd_path, bom_path)
+        boot = "window.__renderModel(" + json.dumps(model) + ", " + json.dumps(xprobe) + ");"
+        fb = comment_ui.firebase_bootstrap("schematic-viewer")
+    html = (HTML.replace("/*__BOOT__*/", boot)
                 .replace("/*__CMT_CSS__*/", comment_ui.CSS)
                 .replace("/*__CMT_JS__*/", comment_ui.JS)
-                .replace("<!--__CMT_FIREBASE__-->", comment_ui.firebase_bootstrap("schematic-viewer")))
+                .replace("<!--__CMT_FIREBASE__-->", fb))
     Path(out_path).write_text(html)
+    if shell:
+        print(f"Wrote {out_path}  (layout shell, {Path(out_path).stat().st_size // 1024} KB)")
+        return
     print(f"Wrote {out_path}  ({len(model['parts'])} components, "
           f"{len(model['copper']) // 5} copper segments, "
           f"{len(model['layers'])} layers, {Path(out_path).stat().st_size // 1024} KB)")
@@ -201,7 +209,15 @@ body.modal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom/
 /*__CMT_CSS__*/
 </style></head>
 <body>
+<div id="shell-gate" style="position:fixed;inset:0;z-index:9999;background:#FBFAF7;display:none;align-items:center;justify-content:center;flex-direction:column;font-family:'IBM Plex Sans',system-ui,sans-serif">
+  <div style="font-size:19px;font-weight:700;color:#221F1A;margin-bottom:6px">PCB Project</div>
+  <div id="shell-gate-msg" style="font-size:14px;color:#8B8578;margin-bottom:20px">Loading&hellip;</div>
+  <button id="shell-gate-btn" style="display:none;align-items:center;gap:8px;height:40px;padding:0 18px;border-radius:10px;border:1px solid #D9D4C6;background:#fff;color:#3A362E;font:600 14px 'IBM Plex Sans',system-ui,sans-serif;cursor:pointer">Sign in with Google</button>
+</div>
 <div id="bar">
+  <button class="tbtn" onclick="location.href='../../'" title="Back to projects">&#8592; Projects</button>
+  <button class="tbtn" onclick="location.href='../'+location.search" title="View the schematic">Schematic</button>
+  <div style="width:1px;height:22px;background:var(--line,#D9D4C6);flex-shrink:0"></div>
   <div><div class="name" id="nm">PCB</div><div class="sub" id="sub"></div></div>
   <div style="flex:1"></div>
   <button class="tbtn" id="cu" style="border-color:#C98A3A;color:#9A5A18">● Copper</button>
@@ -214,6 +230,7 @@ body.modal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom/
     <span id="zl" style="font-family:'IBM Plex Mono',monospace;font-size:11px;min-width:44px;text-align:center">100%</span>
     <button class="tbtn" id="zi" style="border:none;border-radius:0">+</button>
   </div>
+  <div id="cmt-account" style="margin-left:6px;flex-shrink:0"></div>
 </div>
 <div id="stage"><svg id="svg"><g id="scene"></g><g id="hlg"></g></svg><div id="layers"></div><div id="legend"></div></div>
 <div id="tip"></div>
@@ -222,9 +239,13 @@ body.modal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom/
   <iframe id="xframe" src="about:blank"></iframe>
 </div></div>
 <script>
-const M = __MODEL__;
-const XP = __XPROBE__;       // cross-probe: {xnets:[{name,sch,reps,bbox}...], companion} or null
 /*__CMT_JS__*/
+const DOCID = new URLSearchParams(location.search).get('doc') || '';
+// The whole viewer runs from __renderModel: embedded builds call it immediately
+// (see /*__BOOT__*/); the hosted shell calls it after sign-in + fetch. The comment
+// library above stays synchronous so the backend can attach to window.Comments.
+window.__renderModel = function (model, xprobe) {
+const M = model, XP = xprobe || null;   // XP: {xnets, companion, ...} or null
 const svg=document.getElementById('svg'), scene=document.getElementById('scene'), hlg=document.getElementById('hlg'), tip=document.getElementById('tip');
 const [x0,y0,x1,y1]=M.extent, W=x1-x0, H=y1-y0, PAD=Math.max(W,H)*0.04;
 const flipY = y => (y1 - y);   // board y is up
@@ -416,8 +437,8 @@ function showModal(url,full,title){ if(!XP||!XP.companion||MODALMODE) return;
   mframe.src=url; mtitle.textContent=title; mopen.href=full; modal.style.display='flex'; }
 function hideModal(){ if(modal){ modal.style.display='none'; mframe.src='about:blank'; } }
 function crossProbeNet(net){ const xi=xnetOfNet(net); if(xi==null) return;
-  const xn=XP.xnets[xi]; showModal(XP.companion+'?xnet='+xi+'&modal=1', XP.companion+'?xnet='+xi, 'Schematic · '+(xn.name||('net '+xi))); }
-function crossProbeRef(ref){ showModal(XP.companion+'?ref='+encodeURIComponent(ref)+'&modal=1', XP.companion+'?ref='+encodeURIComponent(ref), 'Schematic · '+ref); }
+  const xn=XP.xnets[xi], D='?doc='+encodeURIComponent(DOCID); showModal(XP.companion+D+'&xnet='+xi+'&modal=1', XP.companion+D+'&xnet='+xi, 'Schematic · '+(xn.name||('net '+xi))); }
+function crossProbeRef(ref){ const D='?doc='+encodeURIComponent(DOCID)+'&ref='+encodeURIComponent(ref); showModal(XP.companion+D+'&modal=1', XP.companion+D, 'Schematic · '+ref); }
 function bind(){
   // delegated once on the scene container (survives innerHTML re-renders), instead of
   // (re-)attaching three listeners to every pad on each render.
@@ -545,6 +566,8 @@ if(QP.get('xnet')!==null || QP.get('ref')){
   if(document.readyState==='complete') setTimeout(applyParams,40);
   else window.addEventListener('load',()=>setTimeout(applyParams,40));
 }
+};   // end window.__renderModel
+/*__BOOT__*/
 </script>
 <!--__CMT_FIREBASE__-->
 </body></html>

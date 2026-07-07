@@ -108,14 +108,24 @@ def _attach_diff(model, old_design, new_design, old_name):
     model["removedGeom"] = ghosts
 
 
-def generate(dsn_path, out_path, diff_path=None, xprobe=None):
-    model = build_model(dsn_path, diff_path)
-    html = (HTML_TEMPLATE.replace("__MODEL__", json.dumps(model))
-                         .replace("__XPROBE__", json.dumps(xprobe))
+def generate(dsn_path, out_path, diff_path=None, xprobe=None, shell=False):
+    # shell=True emits a data-free viewer that fetches the model after sign-in (hosted,
+    # private). shell=False bakes the model in via /*__BOOT__*/ (standalone file).
+    if shell:
+        boot, fb = "", comment_ui.shell_bootstrap("schematic-viewer", "schematic")
+        model = None
+    else:
+        model = build_model(dsn_path, diff_path)
+        boot = "window.__renderModel(" + json.dumps(model) + ", " + json.dumps(xprobe) + ");"
+        fb = comment_ui.firebase_bootstrap("schematic-viewer")
+    html = (HTML_TEMPLATE.replace("/*__BOOT__*/", boot)
                          .replace("/*__CMT_CSS__*/", comment_ui.CSS)
                          .replace("/*__CMT_JS__*/", comment_ui.JS)
-                         .replace("<!--__CMT_FIREBASE__-->", comment_ui.firebase_bootstrap("schematic-viewer")))
+                         .replace("<!--__CMT_FIREBASE__-->", fb))
     Path(out_path).write_text(html)
+    if shell:
+        print(f"Wrote {out_path}  (schematic shell, {Path(out_path).stat().st_size // 1024} KB)")
+        return
     n = sum(len(s["parts"]) for s in model["sheets"])
     print(f"Wrote {out_path}  ({len(model['sheets'])} sheets, {n} parts, "
           f"{Path(out_path).stat().st_size // 1024} KB)")
@@ -242,10 +252,18 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
 /*__CMT_CSS__*/
 </style></head>
 <body>
+<div id="shell-gate" style="position:fixed;inset:0;z-index:9999;background:#FBFAF7;display:none;align-items:center;justify-content:center;flex-direction:column;font-family:'IBM Plex Sans',system-ui,sans-serif">
+  <div style="font-size:19px;font-weight:700;color:#221F1A;margin-bottom:6px">PCB Project</div>
+  <div id="shell-gate-msg" style="font-size:14px;color:#8B8578;margin-bottom:20px">Loading&hellip;</div>
+  <button id="shell-gate-btn" style="display:none;align-items:center;gap:8px;height:40px;padding:0 18px;border-radius:10px;border:1px solid #D9D4C6;background:#fff;color:#3A362E;font:600 14px 'IBM Plex Sans',system-ui,sans-serif;cursor:pointer">Sign in with Google</button>
+</div>
 <div style="position:relative;height:100vh;display:flex;flex-direction:column;overflow:hidden">
   <!-- toolbar -->
   <div class="xtop" style="display:flex;align-items:center;gap:12px;height:54px;padding:0 14px;background:#FBFAF7;border-bottom:1px solid #E0DCD1;flex-shrink:0;z-index:40;position:relative">
     <button id="tb-sheets-btn" class="tbtn" style="display:none">Sheets</button>
+    <button class="tbtn" onclick="location.href='../'" title="Back to projects" style="flex-shrink:0">&#8592; Projects</button>
+    <button class="tbtn" onclick="location.href='layout/'+location.search" title="View the board layout" style="flex-shrink:0">Layout</button>
+    <div style="width:1px;height:26px;background:#E0DCD1;flex-shrink:0"></div>
     <div style="display:flex;flex-direction:column;gap:1px;min-width:0">
       <div id="tb-name" style="font-size:14px;font-weight:700;letter-spacing:.01em;line-height:1.15;white-space:nowrap">Schematic</div>
       <div id="tb-sub" style="font-size:10.5px;color:#8B8578;font-family:'IBM Plex Mono',monospace;line-height:1.2;white-space:nowrap">loading…</div>
@@ -271,6 +289,7 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
       <span id="tb-zoom" style="font-family:'IBM Plex Mono',monospace;font-size:11px;min-width:44px;text-align:center;color:#3A362E">100%</span>
       <button id="tb-zin" class="zbtn">+</button>
     </div>
+    <div id="cmt-account" style="margin-left:6px;flex-shrink:0"></div>
   </div>
   <!-- main -->
   <div style="display:flex;flex:1;min-height:0;position:relative">
@@ -558,17 +577,22 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
 })();
 
 /* ── App ── */
-const M = __MODEL__;
-const XP = __XPROBE__;      // cross-probe: {xnets:[{name,sch,reps,bbox}...], companion} or null
+let M = null;              // in shell mode the model is fetched from the backend after
+let XP = null;             // sign-in; in embedded mode /*__BOOT__*/ calls __renderModel now
+const DOCID = new URLSearchParams(location.search).get('doc') || '';
 /*__CMT_JS__*/
 const R = window.SchRender, esc = R.esc;
 const $ = id => document.getElementById(id);
 
 /* ── cross-probe: embed the layout preview inside the details (inspector) card ── */
 const XQP = new URLSearchParams(location.search), XMODAL = XQP.get('modal') === '1';
-const schToXnet = new Map();
-if (XP && XP.xnets) XP.xnets.forEach((xn, i) => { if (xn.sch != null && !schToXnet.has(xn.sch)) schToXnet.set(xn.sch, i); });
-const layoutRefs = new Set((XP && XP.layoutRefs) || []);
+let schToXnet = new Map();
+let layoutRefs = new Set();
+function refreshXprobeMaps() {   // (re)build from XP — called by init() once the model is in
+  schToXnet = new Map();
+  if (XP && XP.xnets) XP.xnets.forEach((xn, i) => { if (xn.sch != null && !schToXnet.has(xn.sch)) schToXnet.set(xn.sch, i); });
+  layoutRefs = new Set((XP && XP.layoutRefs) || []);
+}
 // The details card holds ONE persistent layout iframe at its top, driven by
 // postMessage — hovering across parts updates the preview live instead of
 // reloading pcb.html each time. ensureShell() builds the fixed frame + header
@@ -584,7 +608,7 @@ function ensureShell() {
         `<a id="ins-open" target="_blank" style="font-size:10.5px;color:#2563a8;text-decoration:none;display:none">Open full ↗</a>` +
         `<button id="ins-x" class="iconx" style="cursor:pointer">&times;</button></span></div>` +
     `<div id="ins-preview" style="display:none;border-bottom:1px solid #EAE6DA"><iframe id="ins-frame"` +
-      (XP && XP.companion ? ` src="${XP.companion}?modal=1"` : '') +
+      (XP && XP.companion ? ` src="${XP.companion}?doc=${encodeURIComponent(DOCID)}&modal=1"` : '') +
       ` style="width:100%;height:190px;border:0;display:block;background:#0e0c08"></iframe></div>` +
     `<div id="ins-card"></div>`;
   $('ins-x').addEventListener('click', closeSel);
@@ -633,6 +657,7 @@ function netName(k) { return netNames.get(k) || k; }
 function sheetLabel(i) { const s = M.sheets[i]; return s.page || s.view; }
 
 function init() {
+  refreshXprobeMaps();
   const diff = M.diff || null;
   dctx = diff ? { diff, addedSet: new Set(diff.added), chgSet: new Set(Object.keys(diff.changed)), removedGeom: M.removedGeom } : {};
   netSheets = new Map(); netNames = new Map();
@@ -1117,7 +1142,7 @@ function renderNetCard() {
   $('ins-label').textContent = 'Net';
   const k = selNet, xi = schToXnet.has(k) ? schToXnet.get(k) : null;
   const also = [...(netSheets.get(k) || [])].filter(i => i !== cur).map(i => sheetLabel(i));
-  driveFrame(xi != null && XP && XP.companion ? { xnet: xi, href: XP.companion + '?xnet=' + xi } : null);
+  driveFrame(xi != null && XP && XP.companion ? { xnet: xi, href: XP.companion + '?doc=' + encodeURIComponent(DOCID) + '&xnet=' + xi } : null);
   $('ins-card').innerHTML =
     `<div style="padding:8px 16px 12px;border-bottom:1px solid #EAE6DA">` +
     `<div style="font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:600;color:#221F1A;word-break:break-all">${esc(netName(k) || k)}</div>` +
@@ -1136,7 +1161,7 @@ function renderInspector() {
   ensureShell(); ins.style.display = 'block';
   $('ins-label').textContent = 'Part';
   const inLayout = !(XP && XP.layoutRefs) || layoutRefs.has(sel.des);
-  driveFrame(inLayout && XP && XP.companion ? { ref: sel.des, href: XP.companion + '?ref=' + encodeURIComponent(sel.des) } : null);
+  driveFrame(inLayout && XP && XP.companion ? { ref: sel.des, href: XP.companion + '?doc=' + encodeURIComponent(DOCID) + '&ref=' + encodeURIComponent(sel.des) } : null);
   const diffNote = diffReason(selDes).trim();
   const pins = (sel.pins || []).map(pin => ({
     num: pin[3] || '·', name: pin[4] || '—',
@@ -1242,7 +1267,10 @@ function bindToolbar() {
   window.addEventListener('resize', () => { updateVp(); });
 }
 
-init();
+// Entry point. Embedded builds call this immediately (see /*__BOOT__*/); the hosted
+// shell calls it from the auth+fetch controller once the model is loaded.
+window.__renderModel = function (model, xprobe) { M = model; XP = xprobe || null; init(); };
+/*__BOOT__*/
 </script>
 <!--__CMT_FIREBASE__-->
 </body></html>"""
