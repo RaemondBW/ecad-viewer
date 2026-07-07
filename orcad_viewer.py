@@ -113,7 +113,8 @@ def generate(dsn_path, out_path, diff_path=None, xprobe=None):
     html = (HTML_TEMPLATE.replace("__MODEL__", json.dumps(model))
                          .replace("__XPROBE__", json.dumps(xprobe))
                          .replace("/*__CMT_CSS__*/", comment_ui.CSS)
-                         .replace("/*__CMT_JS__*/", comment_ui.JS))
+                         .replace("/*__CMT_JS__*/", comment_ui.JS)
+                         .replace("<!--__CMT_FIREBASE__-->", comment_ui.firebase_bootstrap("schematic-viewer")))
     Path(out_path).write_text(html)
     n = sum(len(s["parts"]) for s in model["sheets"])
     print(f"Wrote {out_path}  ({len(model['sheets'])} sheets, {n} parts, "
@@ -676,8 +677,9 @@ function init() {
   } }
   // ---- comments: anchor to a part, a net, or an open point (per sheet) ----
   if (!XMODAL) {
+    window.__cmtContext = () => 'sch:' + (M.name || '') + ':' + cur;   // shared with the Firebase backend bootstrap
     Comments.init({
-      context: () => 'sch:' + (M.name || '') + ':' + cur,
+      context: window.__cmtContext,
       svg: svgEl, stage: $('stage'), button: $('cmt-btn'),
       onChange: () => renderSidebar(),   // refresh per-sheet comment counts
       project: (x, y) => ({ sx: x * view.k + view.x, sy: y * view.k + view.y }),
@@ -1241,7 +1243,9 @@ function bindToolbar() {
 }
 
 init();
-</script></body></html>"""
+</script>
+<!--__CMT_FIREBASE__-->
+</body></html>"""
 
 
 def main():

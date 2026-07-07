@@ -138,7 +138,8 @@ def generate(brd_path, out_path, bom_path=None, xprobe=None, model=None):
     html = (HTML.replace("__MODEL__", json.dumps(model))
                 .replace("__XPROBE__", json.dumps(xprobe))
                 .replace("/*__CMT_CSS__*/", comment_ui.CSS)
-                .replace("/*__CMT_JS__*/", comment_ui.JS))
+                .replace("/*__CMT_JS__*/", comment_ui.JS)
+                .replace("<!--__CMT_FIREBASE__-->", comment_ui.firebase_bootstrap("schematic-viewer")))
     Path(out_path).write_text(html)
     print(f"Wrote {out_path}  ({len(model['parts'])} components, "
           f"{len(model['copper']) // 5} copper segments, "
@@ -505,8 +506,9 @@ if(modal){ document.getElementById('xclose').onclick=hideModal;
   modal.addEventListener('click',ev=>{ if(ev.target===modal) hideModal(); }); }
 render(); fit();
 // ---- comments: anchor to a pad (part), a trace's net, or an open point ----
+if(!MODALMODE) window.__cmtContext='brd:'+(M.name||'');   // shared with the Firebase backend bootstrap
 if(!MODALMODE) Comments.init({
-  context:'brd:'+(M.name||''), svg:svg, stage:document.getElementById('stage'),
+  context:window.__cmtContext, svg:svg, stage:document.getElementById('stage'),
   button:document.getElementById('cmt-btn'),
   project:(x,y)=>({sx:x*view.k+view.x, sy:flipY(y)*view.k+view.y}),
   resolveAnchor:(cx,cy)=>{
@@ -543,7 +545,9 @@ if(QP.get('xnet')!==null || QP.get('ref')){
   if(document.readyState==='complete') setTimeout(applyParams,40);
   else window.addEventListener('load',()=>setTimeout(applyParams,40));
 }
-</script></body></html>
+</script>
+<!--__CMT_FIREBASE__-->
+</body></html>
 """
 
 
