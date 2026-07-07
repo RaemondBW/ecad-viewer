@@ -44,8 +44,10 @@ def _demodulify_iife(filename, default_export):
     return "(function(){\n" + src + "\n})();"
 
 
-# window.Comments (overlay) + window.Account (account indicator + Profile/API keys).
-JS = _demodulify_iife("comments.js", "createComments") + "\n" + _demodulify_iife("account.js", "createAccount")
+# window.Comments (overlay) + window.Account (account chip) + window.createDocuments (store).
+JS = (_demodulify_iife("comments.js", "createComments") + "\n"
+      + _demodulify_iife("account.js", "createAccount") + "\n"
+      + _demodulify_iife("documents.js", "createDocuments"))
 CSS = ""   # styles are auto-injected by the libraries at init(); see comments/*.css
 
 
@@ -118,8 +120,6 @@ def shell_bootstrap(app_id, view):
     In ?modal=1 (cross-probe preview) it renders silently on the shared session,
     skipping the gate and comment/account chrome."""
     cfg = json.dumps({**BACKEND, "appId": app_id, "authMode": "popup"})
-    # `doc` is already imported by firebase.js (same module scope); only add getDoc.
-    imp = f"import {{ getDoc }} from '{_FB_CDN}firebase-firestore.js';\n"
     boot = (
         "\n(function () {\n"
         "  const QP = new URLSearchParams(location.search);\n"
@@ -140,9 +140,8 @@ def shell_bootstrap(app_id, view):
         "      if (!u) { showGate('Sign in to view this project.', true); return; }\n"
         "      if (rendered) { hideGate(); return; }\n"
         "      try {\n"
-        "        const snap = await getDoc(doc(b.db, 'documents', docId, 'content', VIEW));\n"
-        "        if (!snap.exists()) throw new Error('missing');\n"
-        "        const dd = snap.data();\n"
+        "        const dd = await createDocuments(b).getContent(docId, VIEW);\n"
+        "        if (!dd) throw new Error('missing');\n"
         "        window.__renderModel(JSON.parse(dd.data), dd.xprobe ? JSON.parse(dd.xprobe) : null);\n"
         "        rendered = true; hideGate();\n"
         "        if (!MODAL) {\n"
@@ -155,4 +154,4 @@ def shell_bootstrap(app_id, view):
         "  } catch (e) { console.warn('[shell] backend error', e); showGate('Unable to load.', false); }\n"
         "})();\n"
     )
-    return '<script type="module">\n' + imp + _firebase_src() + boot + "</script>"
+    return '<script type="module">\n' + _firebase_src() + boot + "</script>"
