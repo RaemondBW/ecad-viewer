@@ -291,6 +291,7 @@ body.modal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom/
   <button class="tbtn" id="vi" style="border-color:#9AA0A8;color:#5A6068">● Vias</button>
   <button class="tbtn" id="cp" style="border-color:#8FA88F;color:#3d5a3d">● Parts</button>
   <button class="tbtn" id="cmt-btn" title="Add / view comments">💬 Comment</button>
+  <button class="tbtn" id="flip" title="Mirror the board horizontally (view from the back)">Flip</button>
   <button class="tbtn" id="fit">Fit</button>
   <div style="display:flex;align-items:center;border:1px solid #D9D4C6;border-radius:8px;background:#FFF;overflow:hidden">
     <button class="tbtn" id="zo" style="border:none;border-radius:0">&#8722;</button>
@@ -317,6 +318,9 @@ const M = model, XP = xprobe || null;   // XP: {xnets, companion, ...} or null
 const svg=document.getElementById('svg'), scene=document.getElementById('scene'), hlg=document.getElementById('hlg'), tip=document.getElementById('tip');
 const [x0,y0,x1,y1]=M.extent, W=x1-x0, H=y1-y0, PAD=Math.max(W,H)*0.04;
 const flipY = y => (y1 - y);   // board y is up
+let flipped=false;                              // horizontal mirror: view the board from the back
+const FX = x => flipped ? (x0 + x1 - x) : x;    // involution around the board centre
+let showOutline=true;
 let view={x:0,y:0,k:1};
 function applyView(){ const t=`translate(${view.x},${view.y}) scale(${view.k})`; scene.setAttribute('transform',t); hlg.setAttribute('transform',t); document.getElementById('zl').textContent=Math.round(view.k*100/baseK)+'%'; Comments.reproject(); }
 let baseK=1;
@@ -333,30 +337,30 @@ function copperPaths(){
   const c=M.copper, grp={};           // group by layer|width for real trace widths
   for(let i=0;i<c.length;i+=7){
     const lay=c[i+4]; if(hiddenLayers.has(lay)) continue;
-    const g=lay+'|'+c[i+5]; (grp[g]=grp[g]||{lay,w:c[i+5],d:[]}).d.push(`M${c[i]} ${flipY(c[i+1])}L${c[i+2]} ${flipY(c[i+3])}`);
+    const g=lay+'|'+c[i+5]; (grp[g]=grp[g]||{lay,w:c[i+5],d:[]}).d.push(`M${FX(c[i])} ${flipY(c[i+1])}L${FX(c[i+2])} ${flipY(c[i+3])}`);
   }
   return Object.values(grp).sort((a,b)=>a.lay-b.lay).map(g=>
     `<path class="cu" d="${g.d.join('')}" stroke="${M.layerColors[g.lay]}" stroke-width="${Math.max(g.w,minW)}"/>`).join('');
 }
 function viasSVG(){
   const v=M.vias||[]; let h='';
-  for(let i=0;i<v.length;i+=4){ h+=`<circle class="via" cx="${v[i]}" cy="${flipY(v[i+1])}" r="${v[i+2]}"/>`; }
+  for(let i=0;i<v.length;i+=4){ h+=`<circle class="via" cx="${FX(v[i])}" cy="${flipY(v[i+1])}" r="${v[i+2]}"/>`; }
   return h;
 }
 function poursSVG(){
   let h='';
   for(const s of (M.pours||[])){       // copper pours / power planes (0x28 shapes)
     if(hiddenLayers.has(s.l)) continue;
-    const p=s.p; let dd='M'+p[0]+' '+flipY(p[1]);
-    for(let i=2;i<p.length;i+=2) dd+='L'+p[i]+' '+flipY(p[i+1]);
+    const p=s.p; let dd='M'+FX(p[0])+' '+flipY(p[1]);
+    for(let i=2;i<p.length;i+=2) dd+='L'+FX(p[i])+' '+flipY(p[i+1]);
     h+=`<path class="pour" d="${dd}Z" fill="${(M.layerColors&&M.layerColors[s.l])||'#666'}" fill-opacity="0.13" stroke="${(M.layerColors&&M.layerColors[s.l])||'#666'}" stroke-opacity="0.35" stroke-width="${minW*2}"/>`;
   }
   return h;
 }
 function outlineSVG(){
-  const p=M.outline||[]; if(p.length<6) return '';
-  let dd='M'+p[0]+' '+flipY(p[1]);
-  for(let i=2;i<p.length;i+=2) dd+='L'+p[i]+' '+flipY(p[i+1]);
+  const p=M.outline||[]; if(!showOutline||p.length<6) return '';
+  let dd='M'+FX(p[0])+' '+flipY(p[1]);
+  for(let i=2;i<p.length;i+=2) dd+='L'+FX(p[i])+' '+flipY(p[i+1]);
   return `<path d="${dd}Z" fill="none" stroke="#8A8577" stroke-width="${minW*4}" stroke-dasharray="${minW*16} ${minW*10}"/>`;
 }
 function render(){
@@ -377,10 +381,10 @@ function render(){
     for(const pd of pads){
       const pa=`${da} data-pi="${np?gi+li:-1}"`; li++;
       const w=pd[2]-pd[0], hh=pd[3]-pd[1];       // already capped to pitch in build()
-      if(pd[4]){ h+=`<ellipse class="pad" ${pa} cx="${pd[0]+w/2}" cy="${flipY(pd[1]+hh/2)}" rx="${w/2}" ry="${hh/2}" fill="${padC}"/>`; }
-      else { h+=`<rect class="pad" ${pa} x="${pd[0]}" y="${flipY(pd[3])}" width="${w}" height="${hh}" rx="${Math.min(w,hh)*0.12}" fill="${padC}"/>`; }
+      if(pd[4]){ h+=`<ellipse class="pad" ${pa} cx="${FX(pd[0]+w/2)}" cy="${flipY(pd[1]+hh/2)}" rx="${w/2}" ry="${hh/2}" fill="${padC}"/>`; }
+      else { h+=`<rect class="pad" ${pa} x="${FX(pd[0]+w/2)-w/2}" y="${flipY(pd[3])}" width="${w}" height="${hh}" rx="${Math.min(w,hh)*0.12}" fill="${padC}"/>`; }
     }
-    h+=`<text class="clbl" ${da} x="${p.x}" y="${flipY(p.y)}" font-size="${LBL}">${esc(p.ref)}</text>`;
+    h+=`<text class="clbl" ${da} x="${FX(p.x)}" y="${flipY(p.y)}" font-size="${LBL}">${esc(p.ref)}</text>`;
     gi+=np;
   }
   scene.innerHTML=h;
@@ -456,18 +460,18 @@ function updateHighlight(){
   if(net==null && aref==null){ hlg.innerHTML=''; return; }
   const C=M.copper; let h=''; const byW={};
   if(net) for(let i=0;i<C.length;i+=7){ if(hiddenLayers.has(C[i+4])||!inNet(net,traceRoot(i))) continue;
-    const w=Math.max(C[i+5],minW); (byW[w]=byW[w]||[]).push(`M${C[i]} ${flipY(C[i+1])}L${C[i+2]} ${flipY(C[i+3])}`); }
+    const w=Math.max(C[i+5],minW); (byW[w]=byW[w]||[]).push(`M${FX(C[i])} ${flipY(C[i+1])}L${FX(C[i+2])} ${flipY(C[i+3])}`); }
   for(const w in byW) h+=`<path class="hl" d="${byW[w].join('')}" stroke-width="${+w*1.7}"/>`;
   const V=M.vias||[];
-  if(net) for(let i=0;i<V.length;i+=4) if(inNet(net,_viaRoot[i/4])) h+=`<circle class="hlv" cx="${V[i]}" cy="${flipY(V[i+1])}" r="${V[i+2]}"/>`;
+  if(net) for(let i=0;i<V.length;i+=4) if(inNet(net,_viaRoot[i/4])) h+=`<circle class="hlv" cx="${FX(V[i])}" cy="${flipY(V[i+1])}" r="${V[i+2]}"/>`;
   let gi=0;
   for(const pt of M.parts){ const hid=hiddenLayers.has(pt.side?_LN[_LN.length-1]:_LN[0]);
     const isRef=aref!=null && pt.ref===aref;
     for(const pd of pt.pads){ const pn=_padNets[gi++]; if(hid) continue;
       if(!(isRef || padInNet(net,pn))) continue;
       const cls=isRef?'hlp hlr':'hlp', w=pd[2]-pd[0], hh=pd[3]-pd[1];   // outline the pad's real shape
-      if(pd[4]) h+=`<ellipse class="${cls}" cx="${pd[0]+w/2}" cy="${flipY(pd[1]+hh/2)}" rx="${w/2}" ry="${hh/2}"/>`;
-      else h+=`<rect class="${cls}" x="${pd[0]}" y="${flipY(pd[3])}" width="${w}" height="${hh}" rx="${Math.min(w,hh)*0.15}"/>`; } }
+      if(pd[4]) h+=`<ellipse class="${cls}" cx="${FX(pd[0]+w/2)}" cy="${flipY(pd[1]+hh/2)}" rx="${w/2}" ry="${hh/2}"/>`;
+      else h+=`<rect class="${cls}" x="${FX(pd[0]+w/2)-w/2}" y="${flipY(pd[3])}" width="${w}" height="${hh}" rx="${Math.min(w,hh)*0.15}"/>`; } }
   hlg.innerHTML=h;
 }
 function _distSeg(px,py,ax,ay,bx,by){ const dx=bx-ax,dy=by-ay,l2=dx*dx+dy*dy; let t=l2?((px-ax)*dx+(py-ay)*dy)/l2:0; t=Math.max(0,Math.min(1,t)); return Math.hypot(px-(ax+t*dx),py-(ay+t*dy)); }
@@ -479,7 +483,7 @@ function pickTraceNet(bx,by){
       const dd=_distSeg(bx,by,C[i],C[i+1],C[i+2],C[i+3]); if(dd<bd){bd=dd;best=i;} } }
   return (best>=0 && bd<tol) ? traceRoot(best) : null;
 }
-function boardXY(e){ const r=svg.getBoundingClientRect(); const sx=(e.clientX-r.left-view.x)/view.k, sy=(e.clientY-r.top-view.y)/view.k; return [sx, y1-sy]; }
+function boardXY(e){ const r=svg.getBoundingClientRect(); const sx=(e.clientX-r.left-view.x)/view.k, sy=(e.clientY-r.top-view.y)/view.k; return [FX(sx), y1-sy]; }
 // nearest pad / trace to a board point — used to snap a comment to the closest item
 function _closestOnSeg(px,py,ax,ay,bx,by){ const dx=bx-ax,dy=by-ay,l2=dx*dx+dy*dy; let t=l2?((px-ax)*dx+(py-ay)*dy)/l2:0; t=Math.max(0,Math.min(1,t)); return [ax+t*dx,ay+t*dy]; }
 function nearestPad(bx,by){ let bd=1e30,best=null;   // nearest by pad rect; point at the PART centre
@@ -502,7 +506,7 @@ const rootToXnet=new Map(), xnetRoots=[];
     for(const r of (xn.reps||[])){ const rt=_find(nqk(r[0],r[1])+'@'+r[2]); roots.add(rt); if(!rootToXnet.has(rt)) rootToXnet.set(rt,i); }
     xnetRoots[i]=roots; });
 })();
-function zoomToBox(b,m,minCtx){ if(!b) return; const rr=svg.getBoundingClientRect(); m=(m==null?0.3:m);
+function zoomToBox(b,m,minCtx){ if(!b) return; if(flipped) b=[FX(b[2]),b[1],FX(b[0]),b[3]]; const rr=svg.getBoundingClientRect(); m=(m==null?0.3:m);
   // minCtx: minimum context window so a tiny target doesn't zoom past all context
   const mc=(minCtx==null?90000:minCtx);
   const bw=Math.max((b[2]-b[0]),mc), bh=Math.max((b[3]-b[1]),mc);
@@ -587,14 +591,17 @@ document.getElementById('cu').onclick=e=>{ showCopper=!showCopper; e.currentTarg
 document.getElementById('vi').onclick=e=>{ showVias=!showVias; e.currentTarget.style.opacity=showVias?1:0.45; render(); };
 document.getElementById('cp').onclick=e=>{ showParts=!showParts; e.currentTarget.style.opacity=showParts?1:0.45; render(); };
 document.getElementById('fit').onclick=fit;
+document.getElementById('flip').onclick=e=>{ flipped=!flipped; e.currentTarget.style.background=flipped?'#EFE9DB':''; render(); if(window.Comments&&Comments.reproject) Comments.reproject(); };
 document.getElementById('zi').onclick=()=>zoomBy(1.3);
 document.getElementById('zo').onclick=()=>zoomBy(0.77);
 window.addEventListener('resize',fit);
 // left panel: clickable copper layers  ·  bottom legend: component types
 function renderLayers(){
   const rows=(M.layers||[]).map(l=>`<div class="lyr${hiddenLayers.has(l)?' off':''}" data-l="${l}"><i style="background:${M.layerColors[l]}"></i>Layer ${l}</div>`).join('');
-  document.getElementById('layers').innerHTML='<div class="lh">Copper layers</div>'+rows;
+  const oRow=(M.outline&&M.outline.length)?`<div class="lyr${showOutline?'':' off'}" data-l="outline"><i style="background:#8A8577"></i>Outline</div>`:'';
+  document.getElementById('layers').innerHTML='<div class="lh">Copper layers</div>'+rows+oRow;
   document.getElementById('layers').querySelectorAll('.lyr').forEach(el=>el.onclick=()=>{
+    if(el.dataset.l==='outline'){ showOutline=!showOutline; renderLayers(); render(); return; }
     const l=+el.dataset.l; if(hiddenLayers.has(l))hiddenLayers.delete(l);else hiddenLayers.add(l); renderLayers(); render();});
 }
 function renderLegend(){
@@ -614,10 +621,10 @@ if(!MODALMODE) window.__cmtContext='brd:'+(M.name||'');   // shared with the Fir
 if(!MODALMODE) Comments.init({
   context:window.__cmtContext, svg:svg, stage:document.getElementById('stage'),
   button:document.getElementById('cmt-btn'),
-  project:(x,y)=>({sx:x*view.k+view.x, sy:flipY(y)*view.k+view.y}),
+  project:(x,y)=>({sx:FX(x)*view.k+view.x, sy:flipY(y)*view.k+view.y}),
   resolveAnchor:(cx,cy)=>{
     const r=svg.getBoundingClientRect();
-    const bx=(cx-r.left-view.x)/view.k, by=y1-((cy-r.top-view.y)/view.k);
+    const bx=FX((cx-r.left-view.x)/view.k), by=y1-((cy-r.top-view.y)/view.k);
     const tol=90/view.k;                       // how near an item must be to point at it
     const pad=nearestPad(bx,by), tr=nearestTrace(bx,by);
     const pD=pad?pad.d:1e30, tD=tr?tr.d:1e30;   // anchor stays at the cursor (bx,by); tx/ty is the item to point at
