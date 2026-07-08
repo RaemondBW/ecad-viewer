@@ -492,11 +492,11 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
       const cls = isBus(w[4]) ? 'wire bus' : 'wire';
       h += `<line class="${cls}" data-net="${esc(w[4])}" x1="${w[0]}" y1="${w[1]}" x2="${w[2]}" y2="${w[3]}"/>`;
     }
-    for (const p of s.parts) {
+    for (let _pi = 0; _pi < s.parts.length; _pi++) { const p = s.parts[_pi];
       if (!p.box) continue;
       let cls = 'comp';
       if (diff) { if (addedSet.has(p.des)) cls += ' add'; else if (chgSet.has(p.des)) cls += ' chg'; }
-      h += `<g class="${cls}" data-des="${esc(p.des)}" data-pkg="${esc(p.pkg)}">`;
+      h += `<g class="${cls}" data-des="${esc(p.des)}" data-pi="${_pi}" data-pkg="${esc(p.pkg)}">`;
       if (p.sym !== 'box' && p.pins.length === 2) {
         const a = p.pins[0], b = p.pins[1];
         const gg = symSVG(p.sym, [a[0], a[1]], [b[0], b[1]]);
@@ -636,7 +636,7 @@ function driveFrame(target) {   // target: {ref}|{xnet} with .href, or null to h
   }
 }
 
-let cur = 0, pinNets = [], selDes = null, selNet = null, cardPinned = false, q = '', searchFocus = false, _cmtSheet = -1;
+let cur = 0, pinNets = [], selDes = null, selPi = null, selNet = null, cardPinned = false, q = '', searchFocus = false, _cmtSheet = -1;
 let bomOpen = false, bomQ = '', dark = false, collapsed = {}, sheetsOpen = true, ready = false;
 let view = { x: 0, y: 0, k: 1 };
 let netSheets, netNames, bomAll, partCount, thumbs, dctx;
@@ -696,13 +696,19 @@ function init() {
   if (XMODAL) document.body.classList.add('xmodal');
   const _xn = XQP.get('xnet'), _xr = XQP.get('ref');
   if (_xn !== null && XP && XP.xnets[+_xn]) { const k = XP.xnets[+_xn].sch; goNet(k, [...(netSheets.get(k) || [])]); centerNet(k); }
-  else if (_xr) { for (let i = 0; i < M.sheets.length; i++) if (M.sheets[i].parts.some(p => p.des === _xr)) {
-    if (XMODAL) {                    // clean preview: highlight + fit the part, no card / mini-map
-      if (i !== cur) { cur = i; renderScene(); fit(); updChrome(); renderSidebar(); }
-      selDes = _xr; updateSelMark(); fitPart(_xr);
-    } else goToPart(i, _xr);
-    break;
-  } }
+  else if (_xr) {
+    let bi = -1, bp = -1;   // sheet with the most pins of this refdes = the meaningful view
+    for (let i = 0; i < M.sheets.length; i++) {
+      const tot = M.sheets[i].parts.filter(p => p.des === _xr).reduce((n, p) => n + (p.pins || []).length, 0);
+      if (tot > bp) { bp = tot; bi = i; }
+    }
+    if (bp > 0) {
+      if (XMODAL) {                    // clean preview: highlight + fit the part, no card / mini-map
+        if (bi !== cur) { cur = bi; renderScene(); fit(); updChrome(); renderSidebar(); }
+        selDes = _xr; updateSelMark(); fitPart(_xr);
+      } else goToPart(bi, _xr);
+    }
+  }
   // ---- comments: anchor to a part, a net, or an open point (per sheet) ----
   if (!XMODAL) {
     window.__cmtContext = () => 'sch:' + (M.name || '') + ':' + cur;   // shared with the Firebase backend bootstrap
@@ -790,7 +796,8 @@ function bindCanvas() {
       if (des) {                       // entered a part
         cancelCardClose();
         if (des !== selDes && !cardPinned && !XMODAL && !(window.Comments && Comments.isPlacing())) { hoverDes = des; clearTimeout(hoverTimer);
-          hoverTimer = setTimeout(() => { if (hoverDes === des && !cardPinned) selectPart(des); }, 90); }
+          const hpi = c ? +c.dataset.pi : null;
+          hoverTimer = setTimeout(() => { if (hoverDes === des && !cardPinned) selectPart(des, hpi); }, 90); }
       } else {                         // left a part onto empty canvas
         hoverDes = null; clearTimeout(hoverTimer);
         if (selDes && !cardPinned) scheduleCardClose();
@@ -816,7 +823,7 @@ function bindCanvas() {
     const n = e.target.closest('[data-net]');
     if (n) { const k = n.dataset.net; togglePin(k); if (isPinned(k)) { cardPinned = true; selectNet(k); } else if (selNet === k) closeSel(); return; }
     const c = e.target.closest('.comp[data-des]');
-    if (c) { cardPinned = true; selectPart(c.dataset.des); return; }   // click pins the card open
+    if (c) { cardPinned = true; selectPart(c.dataset.des, +c.dataset.pi); return; }   // click pins the card open
     if (selDes || selNet) closeSel();
   });
   el.addEventListener('wheel', e => {
@@ -909,15 +916,13 @@ function removePinAt(i) { pinNets.splice(i, 1); applyPins(); renderStatus(); ren
 function clearPins() { pinNets = []; applyPins(); renderStatus(); renderSidebar(); }
 
 /* ---------- selection / navigation ---------- */
-function selectPart(des) { selDes = des; selNet = null; updateSelMark(); renderInspector(); }
-function selectNet(k) { selNet = k; selDes = null; updateSelMark(); renderInspector(); }
-function closeSel() { selDes = null; selNet = null; cardPinned = false; updateSelMark(); renderInspector(); }
+function selectPart(des, pi) { selDes = des; selPi = (pi == null ? null : pi); selNet = null; updateSelMark(); renderInspector(); }
+function selectNet(k) { selNet = k; selDes = null; selPi = null; updateSelMark(); renderInspector(); }
+function closeSel() { selDes = null; selPi = null; selNet = null; cardPinned = false; updateSelMark(); renderInspector(); }
 function updateSelMark() {
   sceneEl.querySelectorAll('.comp.sel').forEach(el => el.classList.remove('sel'));
-  if (selDes) {
-    const el = [...sceneEl.querySelectorAll('.comp[data-des]')].find(e => e.dataset.des === selDes);
-    if (el) el.classList.add('sel');
-  }
+  if (selDes) [...sceneEl.querySelectorAll('.comp[data-des]')]
+    .filter(e => e.dataset.des === selDes).forEach(el => el.classList.add('sel'));
 }
 function selectSheet(i) {
   if (i === cur) return;
@@ -929,12 +934,14 @@ function goToPart(si, des) {
   else { selDes = des; centerPart(des); }
   updateSelMark(); renderInspector();
 }
-function fitPart(des) {   // zoom so the whole part symbol (box + pins) fits, for the modal preview
-  const s = M.sheets[cur], p = s.parts.find(x => x.des === des);
-  if (!p) return;
+function fitPart(des) {   // modal preview: fit ALL sections of the device on this sheet
+  const s = M.sheets[cur], sec = s.parts.filter(x => x.des === des);
+  if (!sec.length) return;
   let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
-  if (p.box) { x0 = p.box[0]; y0 = p.box[1]; x1 = p.box[0] + p.box[2]; y1 = p.box[1] + p.box[3]; }
-  (p.pins || []).forEach(q => { x0 = Math.min(x0, q[0]); y0 = Math.min(y0, q[1]); x1 = Math.max(x1, q[0]); y1 = Math.max(y1, q[1]); });
+  for (const p of sec) {
+    if (p.box) { x0 = Math.min(x0, p.box[0]); y0 = Math.min(y0, p.box[1]); x1 = Math.max(x1, p.box[0] + p.box[2]); y1 = Math.max(y1, p.box[1] + p.box[3]); }
+    (p.pins || []).forEach(q => { x0 = Math.min(x0, q[0]); y0 = Math.min(y0, q[1]); x1 = Math.max(x1, q[0]); y1 = Math.max(y1, q[1]); });
+  }
   if (x1 < x0) return;
   const r = svgEl.getBoundingClientRect(), m = 0.35, w = Math.max(x1 - x0, 20), h = Math.max(y1 - y0, 20);
   view.k = Math.min(8, Math.min(r.width / (w * (1 + m)), r.height / (h * (1 + m))));
@@ -1122,7 +1129,8 @@ function previewNet(k) {
 function clearPreview() { sceneEl.querySelectorAll('.preview').forEach(el => el.classList.remove('preview')); }
 // place the floating card next to the selected part (flip / clamp to stay in view)
 function positionInspectorNear(des) {
-  const s = M.sheets[cur], p = s.parts.find(x => x.des === des), ins = $('inspector');
+  const s = M.sheets[cur], ins = $('inspector');
+  const p = (selPi != null && s.parts[selPi] && s.parts[selPi].des === des) ? s.parts[selPi] : s.parts.find(x => x.des === des);
   if (!p || !svgEl || !ins.offsetParent) return;
   let cx, cy;
   if (p.box) { cx = p.box[0] + p.box[2] / 2; cy = p.box[1] + p.box[3] / 2; }
@@ -1161,9 +1169,10 @@ function renderInspector() {
   // multi-section parts: gates, resistor arrays, power sections) sharing one
   // refdes. Aggregate every section so the card shows the whole device.
   const secs = [];
-  M.sheets.forEach((sh, i) => sh.parts.forEach(p => { if (p.des === selDes) secs.push({ p, si: i }); }));
+  M.sheets.forEach((sh, i) => sh.parts.forEach((p, pi) => { if (p.des === selDes) secs.push({ p, si: i, pi }); }));
   if (!secs.length) { ins.style.display = 'none'; return; }
-  secs.sort((a, b) => (a.si === cur ? -1 : b.si === cur ? 1 : a.si - b.si));
+  const rank = sc => (sc.si === cur && sc.pi === selPi) ? -1 : sc.si === cur ? 0 : 1 + sc.si;
+  secs.sort((a, b) => rank(a) - rank(b));
   const sel = secs[0].p, si = secs[0].si;
   ensureShell(); ins.style.display = 'block';
   $('ins-label').textContent = 'Part';
