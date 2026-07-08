@@ -20,6 +20,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import brd_convert as bc          # noqa: E402
+import brd_objects as bo          # noqa: E402
 import orcad_convert as oc        # noqa: E402
 import comment_ui                 # noqa: E402
 
@@ -97,6 +98,7 @@ def build(brd_path, bom_path=None):
     strings = bc.parse_strings(d)
     placements = bc.component_placements(d, strings)
     bom = oc.parse_bom(bom_path) if bom_path and Path(bom_path).exists() else {}
+    graph = bo.parse_graph(d, strings)   # validated nets / pours / outline (brd_objects)
     parts, axs, ays = [], [], []
     for ref, (x, y, side, rot, pads) in placements.items():
         pre = re.match(r"^[A-Za-z]+", ref)
@@ -112,21 +114,86 @@ def build(brd_path, bom_path=None):
         for p in (pads or [(x - 8000, y - 8000, x + 8000, y + 8000)]):
             axs += [p[0], p[2]]; ays += [p[1], p[3]]
     ext = [min(axs), min(ays), max(axs), max(ays)] if axs else [0, 0, 1000, 1000]
-    # copper is authoritative (0x05 ETCH tracks → 0x15/16/17 segments). Clip to the
-    # board bounding box + margin to drop the odd out-of-board stray segment.
     mx = max((ext[2] - ext[0]), (ext[3] - ext[1])) * 0.02 + 8000
     bb = (ext[0] - mx, ext[1] - mx, ext[2] + mx, ext[3] + mx)
     inb = lambda x, y: bb[0] <= x <= bb[2] and bb[1] <= y <= bb[3]
-    copper = [(x1, y1, x2, y2, lay, w) for (x1, y1, x2, y2, lay, w) in bc.copper_segments(d)
-              if inb(x1, y1) and inb(x2, y2)]
-    # NOTE: copper pour / plane shapes (0x28) are decoded in
-    # brd_convert.copper_shapes() but not rendered — the boundary reconstruction
-    # isn't reliable enough yet, so we omit them rather than draw wrong fills.
+
+    # net-name table: index 0 = "no net"; display strips the $N synthetic prefix
+    net_idx, net_names = {}, [""]
+    def nidx(name):
+        if not name:
+            return 0
+        if name not in net_idx:
+            net_idx[name] = len(net_names)
+            net_names.append(name)
+        return net_idx[name]
+
+    # copper from the validated graph: ETCH-track segments, tagged with their net.
+    # Same geometry filters as the old bc.copper_segments (corruption artifacts).
+    copper = []
+    for key, (off, pk) in graph["segsL"].items():
+        tr = graph["tracks"].get(pk)
+        if not tr or tr[0] != bo.ETCH:
+            continue
+        w, sx, sy, ex, ey = bo.seg_line(d, off)
+        if not (0 < w <= 15000) or (sx, sy) == (ex, ey):
+            continue
+        if max(abs(ex - sx), abs(ey - sy)) > 300000:
+            continue
+        if (abs(sx) < 4000 and abs(sy) < 4000) or (abs(ex) < 4000 and abs(ey) < 4000):
+            continue
+        if inb(sx, sy) and inb(ex, ey):
+            copper.append((sx, sy, ex, ey, tr[1], w, nidx(tr[2])))
+
+    # copper pours / planes: ETCH shapes with walked boundaries (translucent fills)
+    pours = []
+    for s in graph["shapes"]:
+        if s["cls"] != bo.ETCH:
+            continue
+        pts = bo.shape_boundary(d, graph, s)
+        if len(pts) < 3:
+            continue
+        flat = [c for p in pts for c in p]
+        if not all(inb(pts[i][0], pts[i][1]) for i in (0, len(pts) // 2, -1)):
+            continue
+        pours.append({"n": nidx(s["net"]), "l": s["sub"], "p": flat})
+
+    # board outline: the largest route-keepin shape (this design has no explicit
+    # BOARD GEOMETRY outline; the keepin hugs the board edge)
+    outline = []
+    keepins = [s for s in graph["shapes"] if s["cls"] == bo.KEEPIN]
+    if keepins:
+        big = max(keepins, key=lambda s: (s["bbox"][2] - s["bbox"][0]) * (s["bbox"][3] - s["bbox"][1]))
+        pts = bo.shape_boundary(d, graph, big)
+        if len(pts) >= 3:
+            outline = [c for p in pts for c in p]
+
+    # vias with nets (validated); fall back to the heuristic scan if none found
+    vias_flat = []
+    seen_v = set()
+    for x, y, net in graph["vias"]:
+        if inb(x, y) and (x, y) not in seen_v:
+            seen_v.add((x, y))
+            vias_flat += [x, y, 2000, nidx(net)]
+    if not vias_flat:
+        vias_flat = [c for v in bc.vias(d, bb) for c in (v[0], v[1], v[2], 0)]
+
+    # pad → net lookup by exact bbox (both read the same 0x32 coords)
+    pad_net = {}
+    for (_k, x1, y1, x2, y2, net, _fp, _sub, _lay) in graph["pads"]:
+        if net:
+            pad_net[(x1, y1, x2, y2)] = nidx(net)
+    for pt in parts:
+        for p in pt["pads"]:
+            p.append(pad_net.get((p[0], p[1], p[2], p[3]), 0))
+
     layers = sorted({s[4] for s in copper})
-    via = [v for v in bc.vias(d, bb)]
     return {"name": Path(brd_path).stem, "parts": parts, "extent": ext,
-            "copper": [c for s in copper for c in s],      # x1,y1,x2,y2,layer,width × n
-            "vias": [c for v in via for c in v],           # x,y,half × n
+            "copper": [c for s in copper for c in s],      # x1,y1,x2,y2,layer,width,net × n
+            "vias": vias_flat,                             # x,y,half,net × n
+            "pours": pours,                                # [{n,l,p:[x,y…]}]
+            "outline": outline,                            # [x,y…]
+            "netNames": net_names,
             "layers": layers,
             "layerColors": {str(l): LAYER_COLORS[i % len(LAYER_COLORS)] for i, l in enumerate(layers)},
             "types": {k: {"label": v[0], "color": v[1], "hs": v[2]} for k, v in TYPES.items()}}
@@ -264,7 +331,7 @@ const topC=(M.layerColors&&M.layers.length)?M.layerColors[M.layers[0]]:'#E24A3B'
 const botC=(M.layerColors&&M.layers.length)?M.layerColors[M.layers[M.layers.length-1]]:'#2E7DD1';
 function copperPaths(){
   const c=M.copper, grp={};           // group by layer|width for real trace widths
-  for(let i=0;i<c.length;i+=6){
+  for(let i=0;i<c.length;i+=7){
     const lay=c[i+4]; if(hiddenLayers.has(lay)) continue;
     const g=lay+'|'+c[i+5]; (grp[g]=grp[g]||{lay,w:c[i+5],d:[]}).d.push(`M${c[i]} ${flipY(c[i+1])}L${c[i+2]} ${flipY(c[i+3])}`);
   }
@@ -273,22 +340,29 @@ function copperPaths(){
 }
 function viasSVG(){
   const v=M.vias||[]; let h='';
-  for(let i=0;i<v.length;i+=3){ h+=`<circle class="via" cx="${v[i]}" cy="${flipY(v[i+1])}" r="${v[i+2]}"/>`; }
+  for(let i=0;i<v.length;i+=4){ h+=`<circle class="via" cx="${v[i]}" cy="${flipY(v[i+1])}" r="${v[i+2]}"/>`; }
   return h;
 }
 function poursSVG(){
   let h='';
-  for(const s of (M.shapes||[])){
+  for(const s of (M.pours||[])){       // copper pours / power planes (0x28 shapes)
     if(hiddenLayers.has(s.l)) continue;
     const p=s.p; let dd='M'+p[0]+' '+flipY(p[1]);
     for(let i=2;i<p.length;i+=2) dd+='L'+p[i]+' '+flipY(p[i+1]);
-    h+=`<path class="pour" d="${dd}Z" fill="${M.layerColors[s.l]}"/>`;
+    h+=`<path class="pour" d="${dd}Z" fill="${(M.layerColors&&M.layerColors[s.l])||'#666'}" fill-opacity="0.13" stroke="${(M.layerColors&&M.layerColors[s.l])||'#666'}" stroke-opacity="0.35" stroke-width="${minW*2}"/>`;
   }
   return h;
 }
+function outlineSVG(){
+  const p=M.outline||[]; if(p.length<6) return '';
+  let dd='M'+p[0]+' '+flipY(p[1]);
+  for(let i=2;i<p.length;i+=2) dd+='L'+p[i]+' '+flipY(p[i+1]);
+  return `<path d="${dd}Z" fill="none" stroke="#8A8577" stroke-width="${minW*4}" stroke-dasharray="${minW*16} ${minW*10}"/>`;
+}
 function render(){
   let h=`<rect class="board" x="${x0-PAD}" y="${flipY(y1)-PAD}" width="${W+2*PAD}" height="${H+2*PAD}" rx="${PAD*0.3}"/>`;
-  if(showCopper && M.copper.length) h+=copperPaths();
+  h+=outlineSVG();
+  if(showCopper && M.copper.length) h+=poursSVG()+copperPaths();
   if(showVias) h+=viasSVG();
   let gi=0;                            // global pad index (matches buildNets order)
   if(showParts) for(const p of M.parts){
@@ -328,13 +402,15 @@ const _LN=(M.layers&&M.layers.length)?M.layers:[0], _L0=_LN[0];
 const _padNets=[], _padMain=[];   // per pad: Set of net roots, and its dominant root
 (function buildNets(){
   const C=M.copper, eh={};
-  for(let i=0;i<C.length;i+=6){ const L=C[i+4];
+  for(let i=0;i<C.length;i+=7){ const L=C[i+4];
     _uni(nqk(C[i],C[i+1])+'@'+L, nqk(C[i+2],C[i+3])+'@'+L);
+    if(C[i+6]) _uni(nqk(C[i],C[i+1])+'@'+L, 'N#'+C[i+6]);   // exact net id (x1B graph)
     const b0=Math.floor(C[i]/CG)+','+Math.floor(C[i+1]/CG), b1=Math.floor(C[i+2]/CG)+','+Math.floor(C[i+3]/CG);
     (eh[b0]=eh[b0]||[]).push([C[i],C[i+1],L]); (eh[b1]=eh[b1]||[]).push([C[i+2],C[i+3],L]);
   }
   const V=M.vias||[];
-  for(let i=0;i<V.length;i+=3){ const p=nqk(V[i],V[i+1]); for(const L of _LN) _uni(p+'@'+_L0, p+'@'+L); }
+  for(let i=0;i<V.length;i+=4){ const p=nqk(V[i],V[i+1]); for(const L of _LN) _uni(p+'@'+_L0, p+'@'+L);
+    if(V[i+3]) _uni(p+'@'+_L0, 'N#'+V[i+3]); }
   let gi=0;
   for(const pt of M.parts) for(const pd of pt.pads){
     const cnt=new Map();
@@ -342,6 +418,7 @@ const _padNets=[], _padMain=[];   // per pad: Set of net roots, and its dominant
       const arr=eh[bx+','+by]; if(!arr) continue;
       for(const e of arr) if(e[0]>=pd[0]&&e[0]<=pd[2]&&e[1]>=pd[1]&&e[1]<=pd[3]){ const r=_find(nqk(e[0],e[1])+'@'+e[2]); cnt.set(r,(cnt.get(r)||0)+1); }
     }
+    if(pd[5]) { const r=_find('N#'+pd[5]); cnt.set(r,(cnt.get(r)||0)+2); }   // exact pad net
     _padNets[gi]=new Set(cnt.keys());
     let best=null,bc=0; for(const [r,c] of cnt) if(c>bc){bc=c;best=r;}
     _padMain[gi]=best; gi++;
@@ -352,18 +429,20 @@ const _padNets=[], _padMain=[];   // per pad: Set of net roots, and its dominant
 // spatial grid of segments so hover-picking scans only nearby copper, not all of it.
 const _segRoot=[], _viaRoot=[];
 const PG=20000, _pgrid=new Map();
+const _rootName={};   // union root -> real net name (synthetic $N names stay hidden)
 (function buildCaches(){
   const C=M.copper, V=M.vias||[];
-  for(let i=0;i<C.length;i+=6){
-    _segRoot[i/6]=_find(nqk(C[i],C[i+1])+'@'+C[i+4]);
+  for(let i=0;i<C.length;i+=7){
+    _segRoot[i/7]=_find(nqk(C[i],C[i+1])+'@'+C[i+4]);
+    if(C[i+6]&&_rootName[_segRoot[i/7]]===undefined){ const nm=(M.netNames||[])[C[i+6]]; if(nm&&nm[0]!=='$') _rootName[_segRoot[i/7]]=nm; }
     const x0=Math.min(C[i],C[i+2]),x1=Math.max(C[i],C[i+2]),y0=Math.min(C[i+1],C[i+3]),y1=Math.max(C[i+1],C[i+3]);
     for(let gx=Math.floor(x0/PG);gx<=Math.floor(x1/PG);gx++) for(let gy=Math.floor(y0/PG);gy<=Math.floor(y1/PG);gy++){
       const k=gx+','+gy; let a=_pgrid.get(k); if(!a){a=[];_pgrid.set(k,a);} a.push(i); }
   }
-  for(let i=0;i<V.length;i+=3) _viaRoot[i/3]=_find(nqk(V[i],V[i+1])+'@'+_L0);
+  for(let i=0;i<V.length;i+=4) _viaRoot[i/4]=_find(nqk(V[i],V[i+1])+'@'+_L0);
 })();
-const _seen=new Int32Array((M.copper.length/6|0)+1); let _gen=0;
-function traceRoot(i){ return _segRoot[i/6]; }
+const _seen=new Int32Array((M.copper.length/7|0)+1); let _gen=0;
+function traceRoot(i){ return _segRoot[i/7]; }
 function viaRoot(x,y){ return _find(nqk(x,y)+'@'+_L0); }
 let pinnedNet=null, hoverNet=null;   // net highlight: each a Set of net roots, or null
 let pinnedRef=null, hoverRef=null;   // part highlight: a component refdes, or null
@@ -376,11 +455,11 @@ function updateHighlight(){
   scene.classList.toggle('dim', net!=null || aref!=null);
   if(net==null && aref==null){ hlg.innerHTML=''; return; }
   const C=M.copper; let h=''; const byW={};
-  if(net) for(let i=0;i<C.length;i+=6){ if(hiddenLayers.has(C[i+4])||!inNet(net,traceRoot(i))) continue;
+  if(net) for(let i=0;i<C.length;i+=7){ if(hiddenLayers.has(C[i+4])||!inNet(net,traceRoot(i))) continue;
     const w=Math.max(C[i+5],minW); (byW[w]=byW[w]||[]).push(`M${C[i]} ${flipY(C[i+1])}L${C[i+2]} ${flipY(C[i+3])}`); }
   for(const w in byW) h+=`<path class="hl" d="${byW[w].join('')}" stroke-width="${+w*1.7}"/>`;
   const V=M.vias||[];
-  if(net) for(let i=0;i<V.length;i+=3) if(inNet(net,_viaRoot[i/3])) h+=`<circle class="hlv" cx="${V[i]}" cy="${flipY(V[i+1])}" r="${V[i+2]}"/>`;
+  if(net) for(let i=0;i<V.length;i+=4) if(inNet(net,_viaRoot[i/4])) h+=`<circle class="hlv" cx="${V[i]}" cy="${flipY(V[i+1])}" r="${V[i+2]}"/>`;
   let gi=0;
   for(const pt of M.parts){ const hid=hiddenLayers.has(pt.side?_LN[_LN.length-1]:_LN[0]);
     const isRef=aref!=null && pt.ref===aref;
@@ -396,7 +475,7 @@ function pickTraceNet(bx,by){
   const C=M.copper, tol=14/view.k; let best=-1,bd=1e18; _gen++;   // ~14px tolerance
   const gx0=Math.floor((bx-tol)/PG),gx1=Math.floor((bx+tol)/PG),gy0=Math.floor((by-tol)/PG),gy1=Math.floor((by+tol)/PG);
   for(let gx=gx0;gx<=gx1;gx++) for(let gy=gy0;gy<=gy1;gy++){ const a=_pgrid.get(gx+','+gy); if(!a) continue;
-    for(const i of a){ const si=i/6; if(_seen[si]===_gen) continue; _seen[si]=_gen; if(hiddenLayers.has(C[i+4])) continue;
+    for(const i of a){ const si=i/7; if(_seen[si]===_gen) continue; _seen[si]=_gen; if(hiddenLayers.has(C[i+4])) continue;
       const dd=_distSeg(bx,by,C[i],C[i+1],C[i+2],C[i+3]); if(dd<bd){bd=dd;best=i;} } }
   return (best>=0 && bd<tol) ? traceRoot(best) : null;
 }
@@ -411,7 +490,7 @@ function nearestPad(bx,by){ let bd=1e30,best=null;   // nearest by pad rect; poi
 function nearestTrace(bx,by){ const C=M.copper, R=120/view.k; let bd=1e30,bi=-1,cx=0,cy=0; _gen++;   // only within snap range
   const gx0=Math.floor((bx-R)/PG),gx1=Math.floor((bx+R)/PG),gy0=Math.floor((by-R)/PG),gy1=Math.floor((by+R)/PG);
   for(let gx=gx0;gx<=gx1;gx++) for(let gy=gy0;gy<=gy1;gy++){ const a=_pgrid.get(gx+','+gy); if(!a) continue;
-    for(const i of a){ const si=i/6; if(_seen[si]===_gen) continue; _seen[si]=_gen; if(hiddenLayers.has(C[i+4])) continue;
+    for(const i of a){ const si=i/7; if(_seen[si]===_gen) continue; _seen[si]=_gen; if(hiddenLayers.has(C[i+4])) continue;
       const q=_closestOnSeg(bx,by,C[i],C[i+1],C[i+2],C[i+3]),dx=bx-q[0],dy=by-q[1],d=dx*dx+dy*dy; if(d<bd){bd=d;bi=i;cx=q[0];cy=q[1];} } }
   return bi<0?null:{d:Math.sqrt(bd),root:traceRoot(bi),x:cx,y:cy}; }
 // ---- cross-probe: canonical xnets <-> layout net roots, modal preview of the schematic ----
@@ -478,7 +557,10 @@ svg.addEventListener('pointermove',e=>{
   if(drag){ view.x=drag.vx+e.clientX-drag.x; view.y=drag.vy+e.clientY-drag.y; applyView(); return; }
   if(!pinned() && !Comments.isPlacing()){           // hover-highlight when nothing is pinned
     const p=pick(e), key=p?(p.ref?'r:'+p.ref:'n:'+p.net):null;
-    if(key!==hoverKey){ hoverKey=key; hoverRef=p&&p.ref||null; hoverNet=(p&&p.net!=null)?new Set([p.net]):null; updateHighlight(); }
+    if(key!==hoverKey){ hoverKey=key; hoverRef=p&&p.ref||null; hoverNet=(p&&p.net!=null)?new Set([p.net]):null; updateHighlight();
+      if(p&&p.net!=null&&_rootName[p.net]){ tip.textContent=_rootName[p.net]; tip.style.left=(e.clientX+14)+'px'; tip.style.top=(e.clientY+8)+'px'; tip.style.opacity=1; }
+      else if(!p||p.net!=null) tip.style.opacity=0;
+    }
   }
 });
 svg.addEventListener('pointerleave',()=>{ if(!pinned() && hoverKey!==null){ hoverKey=null; hoverRef=null; hoverNet=null; updateHighlight(); } });
@@ -522,7 +604,7 @@ function renderLegend(){
 }
 renderLayers(); renderLegend();
 document.getElementById('nm').textContent=M.name;
-document.getElementById('sub').textContent=M.parts.length+' components · '+((M.copper||[]).length/6|0)+' traces · '+((M.vias||[]).length/3|0)+' vias · '+(M.layers||[]).length+' layers';
+document.getElementById('sub').textContent=M.parts.length+' components · '+((M.copper||[]).length/7|0)+' traces · '+((M.vias||[]).length/4|0)+' vias · '+(M.layers||[]).length+' layers';
 if(MODALMODE) document.body.classList.add('modal');
 if(modal){ document.getElementById('xclose').onclick=hideModal;
   modal.addEventListener('click',ev=>{ if(ev.target===modal) hideModal(); }); }
@@ -540,7 +622,7 @@ if(!MODALMODE) Comments.init({
     const pad=nearestPad(bx,by), tr=nearestTrace(bx,by);
     const pD=pad?pad.d:1e30, tD=tr?tr.d:1e30;   // anchor stays at the cursor (bx,by); tx/ty is the item to point at
     if(pD<=tD && pD<tol) return {kind:'pad',x:bx,y:by,ref:pad.ref,label:'Part '+pad.ref,tx:pad.x,ty:pad.y};
-    if(tD<tol){ const xi=xnetOfNet(new Set([tr.root])); return {kind:'net',x:bx,y:by,ref:(xi!=null?'xnet'+xi:null),label:'Net'+(xi!=null&&XP?(' '+(XP.xnets[xi].name||xi)):''),tx:tr.x,ty:tr.y}; }
+    if(tD<tol){ const xi=xnetOfNet(new Set([tr.root])); const nm=_rootName[tr.root]||(xi!=null&&XP?(XP.xnets[xi].name||''):''); return {kind:'net',x:bx,y:by,ref:(xi!=null?'xnet'+xi:null),label:'Net'+(nm?' '+nm:''),tx:tr.x,ty:tr.y}; }
     return {kind:'point',x:bx,y:by,label:'Open space'};
   }
 });

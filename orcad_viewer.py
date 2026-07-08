@@ -679,7 +679,9 @@ function init() {
   }));
   bomAll = [...bomMap.values()].sort((a, b) =>
     b.refs.length - a.refs.length || a.val.localeCompare(b.val) || a.pkg.localeCompare(b.pkg));
-  partCount = M.sheets.reduce((n, s) => n + s.parts.length, 0);
+  // count physical DEVICES (unique refdes), not drawn sections — multi-section
+  // parts (gate arrays, resistor packs) share one refdes across several symbols
+  partCount = new Set(M.sheets.flatMap(s => s.parts.map(p => p.des))).size;
   thumbs = M.sheets.map(s => R.thumbDataURI(s));
 
   svgEl = $('svg'); sceneEl = $('scene'); miniEl = $('mini'); tipEl = $('tip');
@@ -1155,19 +1157,33 @@ function renderInspector() {
   const ins = $('inspector');
   if (selNet) return renderNetCard();
   if (!selDes) { ins.style.display = 'none'; return; }
-  const order = [cur, ...M.sheets.map((_, i) => i).filter(i => i !== cur)];
-  let sel = null, si = cur;
-  for (const i of order) { const p = M.sheets[i].parts.find(x => x.des === selDes); if (p) { sel = p; si = i; break; } }
-  if (!sel) { ins.style.display = 'none'; return; }
+  // A physical DEVICE is often drawn as several schematic sections (OrCAD
+  // multi-section parts: gates, resistor arrays, power sections) sharing one
+  // refdes. Aggregate every section so the card shows the whole device.
+  const secs = [];
+  M.sheets.forEach((sh, i) => sh.parts.forEach(p => { if (p.des === selDes) secs.push({ p, si: i }); }));
+  if (!secs.length) { ins.style.display = 'none'; return; }
+  secs.sort((a, b) => (a.si === cur ? -1 : b.si === cur ? 1 : a.si - b.si));
+  const sel = secs[0].p, si = secs[0].si;
   ensureShell(); ins.style.display = 'block';
   $('ins-label').textContent = 'Part';
   const inLayout = !(XP && XP.layoutRefs) || layoutRefs.has(sel.des);
   driveFrame(inLayout && XP && XP.companion ? { ref: sel.des, href: XP.companion + '?doc=' + encodeURIComponent(DOCID) + '&ref=' + encodeURIComponent(sel.des) } : null);
   const diffNote = diffReason(selDes).trim();
-  const pins = (sel.pins || []).map(pin => ({
+  const pins = [];
+  secs.forEach((sc, k) => (sc.p.pins || []).forEach(pin => pins.push({
     num: pin[3] || '·', name: pin[4] || '—',
-    net: pin[2] ? (netName(pin[2]) || pin[2]) : '(unconnected)', key: pin[2] || ''
-  }));
+    net: pin[2] ? (netName(pin[2]) || pin[2]) : '(unconnected)', key: pin[2] || '',
+    sec: k, secSheet: sc.si,
+  })));
+  // device-kind note: N two-pin sections of an R/C/L = an array in one package
+  const multi = secs.length > 1;
+  const allTwoPin = multi && secs.every(sc => (sc.p.pins || []).length === 2);
+  const kindNote = multi
+    ? (allTwoPin && /^[RCL]/i.test(sel.des)
+        ? `${{R:'Resistor',C:'Capacitor',L:'Inductor'}[sel.des[0].toUpperCase()]} array · ${secs.length} × ${sel.val || '?'} in one package`
+        : `${secs.length} sections on the schematic — one physical device (${pins.length} pins shown)`)
+    : '';
   $('ins-card').innerHTML =
     `<div style="padding:8px 16px 12px;border-bottom:1px solid #EAE6DA">` +
     `<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">` +
@@ -1176,12 +1192,15 @@ function renderInspector() {
     `</div>` +
     `<div style="font-size:11.5px;color:#6E6A60;margin-top:3px;word-break:break-word;line-height:1.35">${esc(sel.pkg || '—')}</div>` +
     `<div style="font-size:10.5px;color:#A19B8E;font-family:'IBM Plex Mono',monospace;margin-top:5px">${esc(sheetLabel(si))}</div>` +
+    (kindNote ? `<div style="margin-top:6px;font-size:11px;color:#2563a8;line-height:1.4">${esc(kindNote)}</div>` : '') +
     (inLayout ? '' : `<div style="margin-top:6px;font-size:11px;color:#A19B8E">Not placed in this layout.</div>`) +
     (diffNote ? `<div style="margin-top:6px;font-size:11px;color:#9A6700;font-family:'IBM Plex Mono',monospace;white-space:pre-line">${esc(diffNote)}</div>` : '') +
     `</div>` +
     `<div style="padding:8px 8px 14px">` +
-    `<div style="font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#8B8578;padding:2px 8px 6px">Pins · ${pins.length}</div>` +
+    `<div style="font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#8B8578;padding:2px 8px 6px">Pins · ${pins.length}${multi ? ` · ${secs.length} sections` : ''}</div>` +
     pins.map((pn, i) =>
+      (multi && (i === 0 || pins[i - 1].sec !== pn.sec)
+        ? `<div style="font-size:9.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#B7AF9C;padding:7px 8px 2px">Section ${pn.sec + 1} · ${esc(sheetLabel(pn.secSheet))}</div>` : '') +
       `<div class="pinrow" data-i="${i}" style="display:grid;grid-template-columns:30px 1fr;gap:2px 8px;padding:5px 8px;border-radius:6px;cursor:pointer">` +
       `<span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#A19B8E;text-align:right;padding-top:2px">${esc(pn.num)}</span>` +
       `<span style="min-width:0"><span style="display:block;font-size:11.5px;color:#221F1A;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(pn.name)}</span>` +

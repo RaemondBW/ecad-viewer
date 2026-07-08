@@ -23,32 +23,11 @@ def _u(d, k):
 
 # ---------------------------------------------------------------- layout side
 def _layout_nets(brd_path, model):
-    """Replicate the viewer's geometric net grouping (traces + vias, pads by
-    containment) and attach a refdes set, net name, bbox and representative
-    coordinate to each net. `model` is brd_viewer.build()'s model dict."""
-    d = Path(brd_path).read_bytes()
-    strings = bc.parse_strings(d)
-
-    # objKey -> net name, from 0x04 net-assign (connItem@+16 -> net@+12 -> 0x1B.netName@+12)
-    o1b = {}
-    for k in range(0x1200, len(d) - 16, 4):
-        if d[k] == 0x1B and 1 <= _u(d, k + 4) < 300000:
-            o1b.setdefault(_u(d, k + 4), k)
-    name_of = {}
-    for k in range(0x1200, len(d) - 20, 4):
-        if d[k] == 0x04:
-            ob = o1b.get(_u(d, k + 12))
-            if ob:
-                nm = strings.get(_u(d, ob + 12), "")
-                if nm and all(32 <= ord(c) < 127 for c in nm):
-                    name_of[_u(d, k + 16)] = nm
-
-    # track key -> net name; then each segment (by parent track) inherits it
-    track_name = {}
-    for k in range(0x1200, len(d) - 70, 4):
-        if d[k] == 0x05 and _u(d, k + 4) in name_of:
-            track_name[_u(d, k + 4)] = name_of[_u(d, k + 4)]
-
+    """Group layout copper into nets and attach refdes/name/bbox/rep to each.
+    The model now carries EXACT per-segment/pad/via net ids (from the .brd's
+    x1B net records — see brd_objects.py), so grouping mirrors the viewer's
+    union-find: geometric endpoint unions plus a virtual node per net id. The
+    net name comes straight from model['netNames'] (no fuzzy voting)."""
     NQ = 250
     def nk(x, y):
         return (round(x / NQ), round(y / NQ))
@@ -66,23 +45,28 @@ def _layout_nets(brd_path, model):
         par[find(a)] = find(b)
 
     C = model["copper"]
+    V = model["vias"]
+    names = model.get("netNames", [""])
     layers = model["layers"]
     L0 = layers[0]
-    # union trace endpoints (same layer)
-    for i in range(0, len(C), 6):
+    # union trace endpoints (same layer) + the segment's exact net id
+    for i in range(0, len(C), 7):
         L = C[i + 4]
         uni((nk(C[i], C[i + 1]), L), (nk(C[i + 2], C[i + 3]), L))
-    # vias bridge layers
-    V = model["vias"]
-    for i in range(0, len(V), 3):
+        if C[i + 6]:
+            uni((nk(C[i], C[i + 1]), L), ("NET", C[i + 6]))
+    # vias bridge layers (and carry nets)
+    for i in range(0, len(V), 4):
         p = nk(V[i], V[i + 1])
         for L in layers:
             uni((p, L0), (p, L))
+        if V[i + 3]:
+            uni((p, L0), ("NET", V[i + 3]))
 
     # coarse endpoint hash for pad containment
     CG = 8000
     eh = {}
-    for i in range(0, len(C), 6):
+    for i in range(0, len(C), 7):
         for (x, y, L) in ((C[i], C[i + 1], C[i + 4]), (C[i + 2], C[i + 3], C[i + 4])):
             eh.setdefault((x // CG, y // CG), []).append((x, y, L))
 
@@ -95,40 +79,25 @@ def _layout_nets(brd_path, model):
             return [x, y, x, y]
         return [min(b[0], x), min(b[1], y), max(b[2], x), max(b[3], y)]
 
-    # name each net by the track names of its segments (via model copper + .brd tracks)
-    # build a coordinate->name map from named tracks' segments
-    seg_named = []
-    for k in range(0x1200, len(d) - 44, 4):
-        if d[k] in _SEGT:
-            nm = track_name.get(_u(d, k + 12))
-            if nm:
-                sx, sy = struct.unpack_from("<ii", d, k + 28)
-                seg_named.append((sx, sy, d[k], nm))
-    # assign via nearest model segment endpoint (they coincide); use node key
-    named_node = {}
-    for (sx, sy, _t, nm) in seg_named:
-        # layer unknown here; try all layers at this node
-        for L in layers:
-            named_node.setdefault((nk(sx, sy), L), {})
-            named_node[(nk(sx, sy), L)][nm] = named_node[(nk(sx, sy), L)].get(nm, 0) + 1
-
-    for i in range(0, len(C), 6):
+    for i in range(0, len(C), 7):
         r = find((nk(C[i], C[i + 1]), C[i + 4]))
         e = rec(r)
         e["bbox"] = grow(e["bbox"], C[i], C[i + 1])
         e["bbox"] = grow(e["bbox"], C[i + 2], C[i + 3])
         if e["rep"] is None:
             e["rep"] = (C[i], C[i + 1], C[i + 4])
-        nn = named_node.get((nk(C[i], C[i + 1]), C[i + 4]))
-        if nn:
-            for k2, v2 in nn.items():
-                e["name"][k2] = e["name"].get(k2, 0) + v2
+        if C[i + 6]:
+            nm = names[C[i + 6]]
+            if nm and not nm.startswith("$"):        # skip synthetic anon names
+                e["name"][nm] = e["name"].get(nm, 0) + 1
 
-    # pads -> refdes onto the nets whose endpoints they contain
+    # pads -> refdes onto their nets: exact net id first, geometry as fallback
     for pt in model["parts"]:
         ref = pt["ref"]
         for pd in pt["pads"]:
             roots = set()
+            if len(pd) > 5 and pd[5]:
+                roots.add(find(("NET", pd[5])))
             for bx in range(pd[0] // CG, pd[2] // CG + 1):
                 for by in range(pd[1] // CG, pd[3] // CG + 1):
                     for (x, y, L) in eh.get((bx, by), []):
