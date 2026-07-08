@@ -1298,20 +1298,57 @@ function bindToolbar() {
 }
 
 // Model-level diff between two stored revisions — the client-side counterpart of
-// orcad_convert.compute_diff. Components are keyed by refdes; net comparisons use
-// HUMAN-NAMED nets only (anonymous N$… keys embed per-save object ids, which would
-// make every re-save look like a change).
+// orcad_convert.compute_diff. Components are keyed by refdes. Named nets compare by
+// name. Anonymous N$… keys embed per-save object ids (renumbered on every save), so
+// they are matched STRUCTURALLY instead: a net's identity is its endpoint set
+// (REF.PIN list); old and new anonymous nets pair by best endpoint overlap. A net
+// that merely got renumbered matches 100% and stays quiet; a pin moved to a
+// different net breaks the match only for that part.
+function matchAnonNets(oldM, newM) {
+  const endpoints = m => {          // netKey -> Set("REF.PIN"), anonymous nets only
+    const eps = {};
+    m.sheets.forEach(s => s.parts.forEach(p => (p.pins || []).forEach(pin => {
+      const k = pin[2]; if (!k || !/^N\$/.test(k)) return;
+      (eps[k] = eps[k] || new Set()).add(p.des + '.' + (pin[3] || '?'));
+    })));
+    return eps;
+  };
+  const oe = endpoints(oldM), ne = endpoints(newM);
+  const byEp = {};                   // endpoint -> [new net keys] for candidate lookup
+  for (const k in ne) for (const ep of ne[k]) (byEp[ep] = byEp[ep] || []).push(k);
+  const oldId = {}, newId = {}, usedNew = new Set();
+  let seq = 0;
+  const label = eps => { const a = [...eps].sort(); return '(' + a.slice(0, 2).join('–') + (a.length > 2 ? ' +' + (a.length - 2) : '') + ')'; };
+  // largest nets first so big buses claim their best match before 2-pin stubs
+  for (const ok of Object.keys(oe).sort((a, b) => oe[b].size - oe[a].size)) {
+    const cand = {};
+    for (const ep of oe[ok]) for (const nk of (byEp[ep] || [])) if (!usedNew.has(nk)) cand[nk] = (cand[nk] || 0) + 1;
+    let best = null, bc = 0;
+    for (const nk in cand) if (cand[nk] > bc) { bc = cand[nk]; best = nk; }
+    if (best && bc * 2 >= Math.max(oe[ok].size, ne[best].size)) {   // >=50% overlap
+      const id = 'anon net ' + label(ne[best]);
+      oldId[ok] = id; newId[best] = id; usedNew.add(best); seq++;
+    } else oldId[ok] = 'anon net ' + label(oe[ok]) + ' [gone]';
+  }
+  for (const nk in ne) if (!(nk in newId)) newId[nk] = 'anon net ' + label(ne[nk]) + ' [new]';
+  return { oldId, newId };
+}
+
 function computeModelDiff(oldM, newM, oldLabel) {
-  const index = m => {
+  const anon = matchAnonNets(oldM, newM);
+  const index = (m, ids) => {
     const out = {};
     m.sheets.forEach(s => s.parts.forEach(p => {
       const e = out[p.des] = out[p.des] || { pkg: p.pkg, nets: new Set(), pins: 0 };
       e.pins += (p.pins || []).length;
-      (p.pins || []).forEach(pin => { const n = pin[2]; if (n && !/^N\$/.test(n)) e.nets.add(n); });
+      (p.pins || []).forEach(pin => {
+        const n = pin[2]; if (!n) return;
+        e.nets.add(/^N\$/.test(n) ? (ids[n] || n) : n);   // anonymous → structural identity
+      });
     }));
     return out;
   };
-  const o = index(oldM), n = index(newM);
+  const o = index(oldM, anon.oldId), n = index(newM, anon.newId);
   const added = Object.keys(n).filter(d => !(d in o)).sort();
   const removed = Object.keys(o).filter(d => !(d in n)).sort();
   const changed = {};
