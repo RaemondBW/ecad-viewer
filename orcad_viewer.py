@@ -289,6 +289,7 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
       <span id="tb-zoom" style="font-family:'IBM Plex Mono',monospace;font-size:11px;min-width:44px;text-align:center;color:#3A362E">100%</span>
       <button id="tb-zin" class="zbtn">+</button>
     </div>
+    <div id="tb-rev" style="display:none;position:relative;flex-shrink:0"></div>
     <button id="cmt-share" class="tbtn" style="display:none;flex-shrink:0" title="Share this project">Share</button>
     <div id="cmt-account" style="margin-left:6px;flex-shrink:0"></div>
   </div>
@@ -1296,9 +1297,73 @@ function bindToolbar() {
   window.addEventListener('resize', () => { updateVp(); });
 }
 
+// Model-level diff between two stored revisions — the client-side counterpart of
+// orcad_convert.compute_diff. Components are keyed by refdes; net comparisons use
+// HUMAN-NAMED nets only (anonymous N$… keys embed per-save object ids, which would
+// make every re-save look like a change).
+function computeModelDiff(oldM, newM, oldLabel) {
+  const index = m => {
+    const out = {};
+    m.sheets.forEach(s => s.parts.forEach(p => {
+      const e = out[p.des] = out[p.des] || { pkg: p.pkg, nets: new Set(), pins: 0 };
+      e.pins += (p.pins || []).length;
+      (p.pins || []).forEach(pin => { const n = pin[2]; if (n && !/^N\$/.test(n)) e.nets.add(n); });
+    }));
+    return out;
+  };
+  const o = index(oldM), n = index(newM);
+  const added = Object.keys(n).filter(d => !(d in o)).sort();
+  const removed = Object.keys(o).filter(d => !(d in n)).sort();
+  const changed = {};
+  for (const d of Object.keys(n).filter(d => d in o).sort()) {
+    const a = o[d], b = n[d], reasons = [];
+    if (a.pkg !== b.pkg) reasons.push(`package ${a.pkg} → ${b.pkg}`);
+    if (a.pins !== b.pins) reasons.push(`pins ${a.pins} → ${b.pins}`);
+    const gone = [...a.nets].filter(x => !b.nets.has(x)), got = [...b.nets].filter(x => !a.nets.has(x));
+    if (gone.length) reasons.push('nets removed: ' + gone.sort().join(', '));
+    if (got.length) reasons.push('nets added: ' + got.sort().join(', '));
+    if (reasons.length) changed[d] = reasons;
+  }
+  // ghost geometry for removed parts, keyed by sheet id (matches sceneSVG)
+  const rm = new Set(removed), ghosts = {};
+  oldM.sheets.forEach(s => {
+    const gs = s.parts.filter(p => rm.has(p.des) && p.box).map(p => ({ des: p.des, box: p.box }));
+    if (gs.length) ghosts[s.id] = gs;
+  });
+  return { diff: { old: oldLabel, added, removed, changed }, removedGeom: ghosts };
+}
+
+// Revision selector (shell mode): switch revs, open a diff against an older rev.
+function renderRevUI() {
+  const meta = window.__docMeta, el = $('tb-rev');
+  if (!el || !meta || !(meta.rev > 1)) return;
+  const revs = (meta.revs && meta.revs.length ? meta.revs.map(r => +r.n) : Array.from({ length: meta.rev }, (_, i) => i + 1)).sort((a, b) => b - a);
+  const url = (r, dv) => { const u = new URLSearchParams(location.search); u.set('rev', r); if (dv) u.set('diff', dv); else u.delete('diff'); return '?' + u.toString(); };
+  el.style.display = 'flex';
+  el.innerHTML = `<button class="tbtn" id="tb-rev-btn" style="min-width:64px">Rev ${meta.curRev}${meta.diffRev ? ' vs ' + meta.diffRev : ''} ▾</button>` +
+    `<div id="tb-rev-menu" style="display:none;position:absolute;top:40px;right:0;min-width:190px;background:#fff;border:1px solid #E0DCD1;border-radius:10px;box-shadow:0 14px 32px rgba(24,20,10,.16);padding:5px;z-index:90"></div>`;
+  const menu = $('tb-rev-menu');
+  menu.innerHTML = revs.map(r =>
+    `<a href="${url(r)}" style="display:block;padding:7px 9px;border-radius:6px;text-decoration:none;color:#221F1A;font-size:12.5px;${r === meta.curRev && !meta.diffRev ? 'background:#F1EDE3;font-weight:600' : ''}">Rev ${r}${r === meta.rev ? ' (latest)' : ''}</a>` +
+    (r < meta.curRev ? `<a href="${url(meta.curRev, r)}" style="display:block;padding:5px 9px 7px 22px;border-radius:6px;text-decoration:none;color:#9A6700;font-size:11.5px;${meta.diffRev === r ? 'background:#F9F3E4;font-weight:600' : ''}">&Delta; diff vs rev ${r}</a>` : '')
+  ).join('') + (meta.diffRev ? `<a href="${url(meta.curRev)}" style="display:block;padding:7px 9px;border-radius:6px;text-decoration:none;color:#CF222E;font-size:11.5px;border-top:1px solid #EEE9DE;margin-top:4px">clear diff</a>` : '');
+  $('tb-rev-btn').onclick = e => { e.stopPropagation(); menu.style.display = menu.style.display === 'none' ? 'block' : 'none'; };
+  document.addEventListener('click', () => { menu.style.display = 'none'; });
+}
+
 // Entry point. Embedded builds call this immediately (see /*__BOOT__*/); the hosted
-// shell calls it from the auth+fetch controller once the model is loaded.
-window.__renderModel = function (model, xprobe) { M = model; XP = xprobe || null; init(); };
+// shell calls it from the auth+fetch controller once the model is loaded. In shell
+// mode a third argument carries an OLDER revision's model to diff against.
+window.__renderModel = function (model, xprobe, oldModel) {
+  M = model; XP = xprobe || null;
+  if (oldModel) {
+    const meta = window.__docMeta || {};
+    const r = computeModelDiff(oldModel, M, 'rev ' + (meta.diffRev || '?'));
+    M.diff = r.diff; M.removedGeom = r.removedGeom;
+  }
+  init();
+  renderRevUI();
+};
 /*__BOOT__*/
 </script>
 <!--__CMT_FIREBASE__-->

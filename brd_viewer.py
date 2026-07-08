@@ -299,6 +299,7 @@ body.modal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom/
     <button class="tbtn" id="zi" style="border:none;border-radius:0">+</button>
   </div>
   <button id="cmt-share" class="tbtn" style="display:none;flex-shrink:0" title="Share this project">Share</button>
+  <div id="tb-rev" style="display:none;position:relative;flex-shrink:0"></div>
   <div id="cmt-account" style="margin-left:6px;flex-shrink:0"></div>
 </div>
 <div id="stage"><svg id="svg"><g id="scene"></g><g id="hlg"></g></svg><div id="layers"></div><div id="legend"></div></div>
@@ -313,8 +314,24 @@ const DOCID = new URLSearchParams(location.search).get('doc') || '';
 // The whole viewer runs from __renderModel: embedded builds call it immediately
 // (see /*__BOOT__*/); the hosted shell calls it after sign-in + fetch. The comment
 // library above stays synchronous so the backend can attach to window.Comments.
-window.__renderModel = function (model, xprobe) {
+window.__renderModel = function (model, xprobe, oldModel) {
 const M = model, XP = xprobe || null;   // XP: {xnets, companion, ...} or null
+// revision diff (shell mode): compare part placement + counts against an older rev
+const DIFF = (function(){
+  if(!oldModel) return null;
+  const stride = m => m.netNames ? 7 : 6, vstride = m => m.netNames ? 4 : 3;
+  const byRef = m => { const o={}; for(const pt of m.parts) o[pt.ref]=pt; return o; };
+  const o=byRef(oldModel), n=byRef(M);
+  const added=[], removed=[], moved=[];
+  for(const r in n) if(!(r in o)) added.push(n[r]);
+  for(const r in o) if(!(r in n)) removed.push(o[r]);
+  for(const r in n) if(r in o){ const dx=n[r].x-o[r].x, dy=n[r].y-o[r].y;
+    if(Math.abs(dx)+Math.abs(dy)>5000) moved.push({ref:r, ox:o[r].x, oy:o[r].y, nx:n[r].x, ny:n[r].y}); }
+  return { added, removed, moved,
+    oldTraces: oldModel.copper.length/stride(oldModel)|0, newTraces: M.copper.length/stride(M)|0,
+    oldVias: (oldModel.vias||[]).length/vstride(oldModel)|0, newVias: (M.vias||[]).length/vstride(M)|0,
+    label: 'rev ' + ((window.__docMeta||{}).diffRev || '?') };
+})();
 const svg=document.getElementById('svg'), scene=document.getElementById('scene'), hlg=document.getElementById('hlg'), tip=document.getElementById('tip');
 const [x0,y0,x1,y1]=M.extent, W=x1-x0, H=y1-y0, PAD=Math.max(W,H)*0.04;
 const flipY = y => (y1 - y);   // board y is up
@@ -363,6 +380,17 @@ function outlineSVG(){
   for(let i=2;i<p.length;i+=2) dd+='L'+FX(p[i])+' '+flipY(p[i+1]);
   return `<path d="${dd}Z" fill="none" stroke="#8A8577" stroke-width="${minW*4}" stroke-dasharray="${minW*16} ${minW*10}"/>`;
 }
+function diffSVG(){
+  if(!DIFF) return '';
+  const R=9000; let h='';
+  for(const pt of DIFF.added)   h+=`<circle cx="${FX(pt.x)}" cy="${flipY(pt.y)}" r="${R}" fill="none" stroke="#1A7F37" stroke-width="${minW*4}"/>`;
+  for(const pt of DIFF.removed) h+=`<circle cx="${FX(pt.x)}" cy="${flipY(pt.y)}" r="${R}" fill="none" stroke="#CF222E" stroke-width="${minW*3}" stroke-dasharray="${minW*8} ${minW*6}"/>`;
+  for(const mv of DIFF.moved){
+    h+=`<line x1="${FX(mv.ox)}" y1="${flipY(mv.oy)}" x2="${FX(mv.nx)}" y2="${flipY(mv.ny)}" stroke="#9A6700" stroke-width="${minW*3}" stroke-dasharray="${minW*6} ${minW*5}"/>`;
+    h+=`<circle cx="${FX(mv.nx)}" cy="${flipY(mv.ny)}" r="${R*0.8}" fill="none" stroke="#9A6700" stroke-width="${minW*4}"/>`;
+  }
+  return h;
+}
 function render(){
   let h=`<rect class="board" x="${x0-PAD}" y="${flipY(y1)-PAD}" width="${W+2*PAD}" height="${H+2*PAD}" rx="${PAD*0.3}"/>`;
   h+=outlineSVG();
@@ -387,6 +415,7 @@ function render(){
     h+=`<text class="clbl" ${da} x="${FX(p.x)}" y="${flipY(p.y)}" font-size="${LBL}">${esc(p.ref)}</text>`;
     gi+=np;
   }
+  h+=diffSVG();
   scene.innerHTML=h;
   bind();
   updateHighlight();
@@ -616,6 +645,29 @@ if(MODALMODE) document.body.classList.add('modal');
 if(modal){ document.getElementById('xclose').onclick=hideModal;
   modal.addEventListener('click',ev=>{ if(ev.target===modal) hideModal(); }); }
 render(); fit();
+if(DIFF){ const el=document.getElementById('sub');
+  el.innerHTML+=` · <span style="color:#8B8578">vs ${DIFF.label}</span>`+
+    ` <span style="padding:1px 6px;border-radius:9px;background:rgba(26,127,55,.14);color:#1A7F37">+${DIFF.added.length}</span>`+
+    ` <span style="padding:1px 6px;border-radius:9px;background:rgba(207,34,46,.13);color:#CF222E">&#8722;${DIFF.removed.length}</span>`+
+    ` <span style="padding:1px 6px;border-radius:9px;background:rgba(154,103,0,.16);color:#9A6700">&#8703;${DIFF.moved.length} moved</span>`+
+    (DIFF.newTraces!==DIFF.oldTraces?` <span style="color:#8B8578">traces ${DIFF.oldTraces}&#8594;${DIFF.newTraces}</span>`:'')+
+    (DIFF.newVias!==DIFF.oldVias?` <span style="color:#8B8578">vias ${DIFF.oldVias}&#8594;${DIFF.newVias}</span>`:''); }
+(function renderRevUI(){
+  const meta=window.__docMeta, el=document.getElementById('tb-rev');
+  if(!el||!meta||!(meta.rev>1)) return;
+  const revs=(meta.revs&&meta.revs.length?meta.revs.map(r=>+r.n):Array.from({length:meta.rev},(_,i)=>i+1)).sort((a,b)=>b-a);
+  const url=(r,dv)=>{const u=new URLSearchParams(location.search);u.set('rev',r);if(dv)u.set('diff',dv);else u.delete('diff');return '?'+u.toString();};
+  el.style.display='flex';
+  el.innerHTML=`<button class="tbtn" id="tb-rev-btn" style="min-width:64px">Rev ${meta.curRev}${meta.diffRev?' vs '+meta.diffRev:''} &#9662;</button>`+
+    `<div id="tb-rev-menu" style="display:none;position:absolute;top:40px;right:0;min-width:190px;background:#fff;border:1px solid #E0DCD1;border-radius:10px;box-shadow:0 14px 32px rgba(24,20,10,.16);padding:5px;z-index:90"></div>`;
+  const menu=document.getElementById('tb-rev-menu');
+  menu.innerHTML=revs.map(r=>
+    `<a href="${url(r)}" style="display:block;padding:7px 9px;border-radius:6px;text-decoration:none;color:#221F1A;font-size:12.5px;${r===meta.curRev&&!meta.diffRev?'background:#F1EDE3;font-weight:600':''}">Rev ${r}${r===meta.rev?' (latest)':''}</a>`+
+    (r<meta.curRev?`<a href="${url(meta.curRev,r)}" style="display:block;padding:5px 9px 7px 22px;border-radius:6px;text-decoration:none;color:#9A6700;font-size:11.5px;${meta.diffRev===r?'background:#F9F3E4;font-weight:600':''}">&Delta; diff vs rev ${r}</a>`:'')
+  ).join('')+(meta.diffRev?`<a href="${url(meta.curRev)}" style="display:block;padding:7px 9px;border-radius:6px;text-decoration:none;color:#CF222E;font-size:11.5px;border-top:1px solid #EEE9DE;margin-top:4px">clear diff</a>`:'');
+  document.getElementById('tb-rev-btn').onclick=e=>{e.stopPropagation();menu.style.display=menu.style.display==='none'?'block':'none';};
+  document.addEventListener('click',()=>{menu.style.display='none';});
+})();
 // ---- comments: anchor to a pad (part), a trace's net, or an open point ----
 if(!MODALMODE) window.__cmtContext='brd:'+(M.name||'');   // shared with the Firebase backend bootstrap
 if(!MODALMODE) Comments.init({
