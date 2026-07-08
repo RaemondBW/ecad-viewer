@@ -44,10 +44,12 @@ def _demodulify_iife(filename, default_export):
     return "(function(){\n" + src + "\n})();"
 
 
-# window.Comments (overlay) + window.Account (account chip) + window.createDocuments (store).
+# window.Comments (overlay) + window.Account (chip) + window.createDocuments (store)
+# + window.Share (Google-Docs share dialog).
 JS = (_demodulify_iife("comments.js", "createComments") + "\n"
       + _demodulify_iife("account.js", "createAccount") + "\n"
-      + _demodulify_iife("documents.js", "createDocuments"))
+      + _demodulify_iife("documents.js", "createDocuments") + "\n"
+      + _demodulify_iife("share.js", "createShare"))
 CSS = ""   # styles are auto-injected by the libraries at init(); see comments/*.css
 
 
@@ -135,12 +137,11 @@ def shell_bootstrap(app_id, view):
         f"    const b = createFirebaseComments({{ ...{cfg}, context: ctx }});\n"
         "    window.__cmtBackend = b;\n"
         "    if (gbtn) gbtn.onclick = () => b.identity.signIn();\n"
-        "    b.identity.subscribe(async () => {\n"
-        "      const u = b.identity.current();\n"
-        "      if (!u) { showGate('Sign in to view this project.', true); return; }\n"
-        "      if (rendered) { hideGate(); return; }\n"
+        "    const attempt = async () => {\n"
+        "      if (rendered) return;\n"
+        "      const documents = createDocuments(b);\n"
         "      try {\n"
-        "        const dd = await createDocuments(b).getContent(docId, VIEW);\n"
+        "        const dd = await documents.getContent(docId, VIEW);\n"   # public docs succeed while signed-out
         "        if (!dd) throw new Error('missing');\n"
         "        window.__renderModel(JSON.parse(dd.data), dd.xprobe ? JSON.parse(dd.xprobe) : null);\n"
         "        rendered = true; hideGate();\n"
@@ -148,9 +149,15 @@ def shell_bootstrap(app_id, view):
         "          if (window.Comments && window.Comments.setBackend) window.Comments.setBackend(b);\n"
         "          const mnt = document.getElementById('cmt-account');\n"
         "          if (window.Account && mnt) window.Account.init({ mount: mnt, identity: b.identity, apiKeys: b.apiKeys });\n"
+        "          const shareBtn = document.getElementById('cmt-share');\n"
+        "          if (window.Share && shareBtn && b.identity.current()) { window.Share.init({ documents, identity: b.identity, linkFor: id => location.origin + location.pathname + '?doc=' + encodeURIComponent(id) }); shareBtn.style.display = ''; shareBtn.onclick = () => window.Share.open(docId); }\n"
         "        }\n"
-        "      } catch (e) { showGate('You don\\u2019t have access to this project.', false); }\n"
-        "    });\n"
+        "      } catch (e) {\n"
+        "        if (b.identity.current()) showGate('You don\\u2019t have access to this project.', false);\n"
+        "        else showGate('Sign in to view this project.', true);\n"   # private → offer sign-in
+        "      }\n"
+        "    };\n"
+        "    b.identity.subscribe(() => attempt());\n"
         "  } catch (e) { console.warn('[shell] backend error', e); showGate('Unable to load.', false); }\n"
         "})();\n"
     )

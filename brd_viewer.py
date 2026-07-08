@@ -230,6 +230,7 @@ body.modal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom/
     <span id="zl" style="font-family:'IBM Plex Mono',monospace;font-size:11px;min-width:44px;text-align:center">100%</span>
     <button class="tbtn" id="zi" style="border:none;border-radius:0">+</button>
   </div>
+  <button id="cmt-share" class="tbtn" style="display:none;flex-shrink:0" title="Share this project">Share</button>
   <div id="cmt-account" style="margin-left:6px;flex-shrink:0"></div>
 </div>
 <div id="stage"><svg id="svg"><g id="scene"></g><g id="hlg"></g></svg><div id="layers"></div><div id="legend"></div></div>

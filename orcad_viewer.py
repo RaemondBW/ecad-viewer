@@ -289,6 +289,7 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
       <span id="tb-zoom" style="font-family:'IBM Plex Mono',monospace;font-size:11px;min-width:44px;text-align:center;color:#3A362E">100%</span>
       <button id="tb-zin" class="zbtn">+</button>
     </div>
+    <button id="cmt-share" class="tbtn" style="display:none;flex-shrink:0" title="Share this project">Share</button>
     <div id="cmt-account" style="margin-left:6px;flex-shrink:0"></div>
   </div>
   <!-- main -->
