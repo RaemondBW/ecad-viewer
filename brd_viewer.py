@@ -243,6 +243,13 @@ html,body{margin:0;height:100%;overflow:hidden;background:#E9E7E1;font-family:'I
 #layers .lyr:hover{background:#F0EDE3}
 #layers .lyr.off{opacity:.4;text-decoration:line-through}
 #layers .lyr i{width:14px;height:5px;border-radius:2px;display:inline-block}
+#netlegend{position:absolute;right:12px;bottom:12px;background:rgba(251,250,247,.96);border:1px solid #E0DCD1;border-radius:10px;padding:9px 11px;font-size:11.5px;max-width:46%;box-shadow:0 6px 18px rgba(20,16,8,.12)}
+#netlegend .ll{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8B8578;margin-bottom:4px}
+#netlegend .nl{display:flex;align-items:center;gap:7px;padding:2px 0;font-family:'IBM Plex Mono',monospace;color:#43403A}
+#netlegend .nl i{width:11px;height:11px;border-radius:3px;flex:0 0 auto}
+#netlegend .nl span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+#netlegend .nl b{cursor:pointer;color:#A19B8E;font-weight:400;padding:0 2px;flex:0 0 auto}
+#netlegend .nl b:hover{color:#CF222E}
 #tip{position:fixed;pointer-events:none;background:#221F1A;color:#FBFAF7;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:5px 9px;border-radius:6px;opacity:0;transition:opacity .1s;z-index:9;white-space:pre-line}
 .board{fill:#1c2a25;stroke:#0e1512}
 .cu{stroke-opacity:.85;fill:none;stroke-linecap:round;stroke-linejoin:round}
@@ -259,6 +266,10 @@ body.modal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom/
 /* cross-probe modal */
 #xmodal{display:none;position:fixed;inset:0;background:rgba(20,18,14,.55);z-index:20;align-items:center;justify-content:center}
 #xbox{background:#12100C;border:1px solid #3a352b;border-radius:12px;width:min(760px,86vw);height:min(620px,82vh);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+/* hover "peek": a non-blocking corner preview (pointer passes through to the board) */
+#xmodal.peek{background:none;pointer-events:none;align-items:flex-start;justify-content:flex-end;padding:60px 14px 14px}
+#xmodal.peek #xbox{pointer-events:none;width:min(40%,460px);height:min(52%,400px);box-shadow:0 18px 48px rgba(0,0,0,.5)}
+#xmodal.peek #xopen,#xmodal.peek #xclose{display:none}
 #xhead{display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid #2c281f;color:#EDEAE2;font-family:'IBM Plex Mono',monospace;font-size:12px}
 #xtitle{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #xopen,#xclose{color:#8FD0FF;text-decoration:none;cursor:pointer;font-size:12px;border:1px solid #3a4a58;border-radius:6px;padding:3px 9px;background:none}
@@ -278,7 +289,7 @@ body.modal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom/
 </div>
 <div id="bar">
   <button class="tbtn" onclick="location.href='../../'" title="Back to projects">&#8592; Projects</button>
-  <button class="tbtn" onclick="location.href='../'+location.search" title="View the schematic">Schematic</button>
+  <button class="tbtn" id="to-sch" title="View the schematic">Schematic</button>
   <div style="width:1px;height:22px;background:var(--line,#D9D4C6);flex-shrink:0"></div>
   <div><div class="name" id="nm">PCB</div><div class="sub" id="sub"></div></div>
   <div style="flex:1"></div>
@@ -294,10 +305,10 @@ body.modal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom/
   <div id="tb-rev" style="display:none;position:relative;flex-shrink:0"></div>
   <div id="cmt-account" style="margin-left:6px;flex-shrink:0"></div>
 </div>
-<div id="stage"><svg id="svg"><g id="scene"></g><g id="hlg"></g></svg><div id="layers"></div></div>
+<div id="stage"><svg id="svg"><g id="scene"></g><g id="hlg"></g></svg><div id="layers"></div><div id="netlegend" style="display:none"></div></div>
 <div id="tip"></div>
 <div id="xmodal"><div id="xbox">
-  <div id="xhead"><span id="xtitle"></span><a id="xopen" target="_blank">Open full ↗</a><button id="xclose">✕</button></div>
+  <div id="xhead"><span id="xtitle"></span><a id="xopen">Open full →</a><button id="xclose">✕</button></div>
   <iframe id="xframe" src="about:blank"></iframe>
 </div></div>
 <script>
@@ -494,29 +505,68 @@ function traceRoot(i){ return _segRoot[i/7]; }
 function viaRoot(x,y){ return _find(nqk(x,y)+'@'+_L0); }
 let pinnedNet=null, hoverNet=null;   // net highlight: each a Set of net roots, or null
 let pinnedRef=null, hoverRef=null;   // part highlight: a component refdes, or null
+let pinnedXnets=[];                  // xnet indices behind pinnedNet (for cross-probe round-trip)
+// Multiple highlighted nets, each in its own colour (matched to the schematic when
+// cross-probed). pinnedNet is the derived union used for hit-testing / dimming.
+const PALETTE=['#EA580C','#2563EB','#16A34A','#9333EA','#DB2777','#0891B2','#CA8A04','#DC2626'];
+let pinnedList=[];   // [{ roots:Set, color, name, xnet }]
+function nextColor(){ const used=new Set(pinnedList.map(p=>p.color)); return PALETTE.find(c=>!used.has(c))||PALETTE[pinnedList.length%PALETTE.length]; }
+function syncPinnedNet(){
+  if(!pinnedList.length){ pinnedNet=null; pinnedXnets=[]; return; }
+  const u=new Set(); pinnedList.forEach(p=>p.roots.forEach(r=>u.add(r))); pinnedNet=u;
+  pinnedXnets=pinnedList.filter(p=>p.xnet!=null).map(p=>p.xnet);
+}
+function netNameOf(xi,root){ if(xi!=null&&XP&&XP.xnets[xi]) return XP.xnets[xi].name||('net '+xi); return (typeof _rootName!=='undefined'&&_rootName[root])||'net'; }
+// Cross-probe: carry the highlighted nets to the schematic as ?xnet=i,j,k.
+function schematicHref(){ const u=new URLSearchParams(location.search); u.delete('ref');
+  if(pinnedXnets.length) u.set('xnet',pinnedXnets.join(',')); else u.delete('xnet');
+  return '../?'+u.toString(); }
 function activeNet(){ return pinnedNet||hoverNet; }
 function inNet(net,r){ return net && r!=null && net.has(r); }
 function padInNet(net,pn){ if(!net||!pn) return false; for(const r of pn) if(net.has(r)) return true; return false; }
-function updateHighlight(){
-  const aref=pinnedRef||hoverRef;    // a hovered/clicked part's pads take priority over the net
-  const net=aref?null:activeNet();
-  scene.classList.toggle('dim', net!=null || aref!=null);
-  if(net==null && aref==null){ hlg.innerHTML=''; return; }
+// Draw one net's copper/vias/pads into the highlight layer, in `color`.
+function drawNet(net,color){
   const C=M.copper; let h=''; const byW={};
-  if(net) for(let i=0;i<C.length;i+=7){ if(hiddenLayers.has(C[i+4])||!inNet(net,traceRoot(i))) continue;
+  for(let i=0;i<C.length;i+=7){ if(hiddenLayers.has(C[i+4])||!inNet(net,traceRoot(i))) continue;
     const w=Math.max(C[i+5],minW); (byW[w]=byW[w]||[]).push(`M${FX(C[i])} ${flipY(C[i+1])}L${FX(C[i+2])} ${flipY(C[i+3])}`); }
-  for(const w in byW) h+=`<path class="hl" d="${byW[w].join('')}" stroke-width="${+w*1.7}"/>`;
+  for(const w in byW) h+=`<path class="hl" style="stroke:${color}" d="${byW[w].join('')}" stroke-width="${+w*1.7}"/>`;
   const V=M.vias||[];
-  if(net) for(let i=0;i<V.length;i+=4) if(inNet(net,_viaRoot[i/4])) h+=`<circle class="hlv" cx="${FX(V[i])}" cy="${flipY(V[i+1])}" r="${V[i+2]}"/>`;
+  for(let i=0;i<V.length;i+=4) if(inNet(net,_viaRoot[i/4])) h+=`<circle class="hlv" style="stroke:${color}" cx="${FX(V[i])}" cy="${flipY(V[i+1])}" r="${V[i+2]}"/>`;
   let gi=0;
   for(const pt of M.parts){ const hid=hiddenLayers.has(pt.side?_LN[_LN.length-1]:_LN[0]);
-    const isRef=aref!=null && pt.ref===aref;
-    for(const pd of pt.pads){ const pn=_padNets[gi++]; if(hid) continue;
-      if(!(isRef || padInNet(net,pn))) continue;
-      const cls=isRef?'hlp hlr':'hlp', w=pd[2]-pd[0], hh=pd[3]-pd[1];   // outline the pad's real shape
-      if(pd[4]) h+=`<ellipse class="${cls}" cx="${FX(pd[0]+w/2)}" cy="${flipY(pd[1]+hh/2)}" rx="${w/2}" ry="${hh/2}"/>`;
-      else h+=`<rect class="${cls}" x="${FX(pd[0]+w/2)-w/2}" y="${flipY(pd[3])}" width="${w}" height="${hh}" rx="${Math.min(w,hh)*0.15}"/>`; } }
+    for(const pd of pt.pads){ const pn=_padNets[gi++]; if(hid||!padInNet(net,pn)) continue;
+      const w=pd[2]-pd[0], hh=pd[3]-pd[1];
+      if(pd[4]) h+=`<ellipse class="hlp" style="stroke:${color}" cx="${FX(pd[0]+w/2)}" cy="${flipY(pd[1]+hh/2)}" rx="${w/2}" ry="${hh/2}"/>`;
+      else h+=`<rect class="hlp" style="stroke:${color}" x="${FX(pd[0]+w/2)-w/2}" y="${flipY(pd[3])}" width="${w}" height="${hh}" rx="${Math.min(w,hh)*0.15}"/>`; } }
+  return h;
+}
+// Draw a single component's pads outlined (part cross-probe highlight).
+function drawRef(ref){ let h='';
+  for(const pt of M.parts){ if(pt.ref!==ref) continue; if(hiddenLayers.has(pt.side?_LN[_LN.length-1]:_LN[0])) continue;
+    for(const pd of pt.pads){ const w=pd[2]-pd[0], hh=pd[3]-pd[1];
+      if(pd[4]) h+=`<ellipse class="hlp hlr" cx="${FX(pd[0]+w/2)}" cy="${flipY(pd[1]+hh/2)}" rx="${w/2}" ry="${hh/2}"/>`;
+      else h+=`<rect class="hlp hlr" x="${FX(pd[0]+w/2)-w/2}" y="${flipY(pd[3])}" width="${w}" height="${hh}" rx="${Math.min(w,hh)*0.15}"/>`; } }
+  return h;
+}
+function updateHighlight(){
+  const aref=pinnedRef||hoverRef;    // a hovered/clicked part's pads take priority over the net
+  const active = aref!=null || pinnedList.length>0 || hoverNet!=null;
+  scene.classList.toggle('dim', active);
+  if(!active){ hlg.innerHTML=''; return; }
+  let h='';
+  if(aref) h+=drawRef(aref);
+  else if(pinnedList.length) for(const pl of pinnedList) h+=drawNet(pl.roots,pl.color);   // each in its colour
+  else if(hoverNet) h+=drawNet(hoverNet,'#FFF3C4');                                        // transient hover
   hlg.innerHTML=h;
+}
+function renderNetLegend(){
+  const el=document.getElementById('netlegend'); if(!el) return;
+  if(!pinnedList.length){ el.style.display='none'; el.innerHTML=''; return; }
+  el.style.display='';
+  el.innerHTML='<div class="ll">Highlighted nets</div>'+pinnedList.map((p,i)=>
+    `<div class="nl"><i style="background:${p.color}"></i><span title="${esc(p.name||'net')}">${esc(p.name||'net')}</span><b data-rm="${i}" title="Remove">&times;</b></div>`).join('');
+  el.querySelectorAll('b[data-rm]').forEach(b=>b.onclick=e=>{ e.stopPropagation();
+    pinnedList.splice(+b.dataset.rm,1); syncPinnedNet(); updateHighlight(); renderNetLegend(); });
 }
 function _distSeg(px,py,ax,ay,bx,by){ const dx=bx-ax,dy=by-ay,l2=dx*dx+dy*dy; let t=l2?((px-ax)*dx+(py-ay)*dy)/l2:0; t=Math.max(0,Math.min(1,t)); return Math.hypot(px-(ax+t*dx),py-(ay+t*dy)); }
 function pickTraceNet(bx,by){
@@ -561,12 +611,24 @@ function refBox(ref){ const p=M.parts.find(q=>q.ref===ref); if(!p||!p.pads.lengt
   let b=[1e18,1e18,-1e18,-1e18]; for(const pd of p.pads){ b=[Math.min(b[0],pd[0]),Math.min(b[1],pd[1]),Math.max(b[2],pd[2]),Math.max(b[3],pd[3])]; } return b; }
 const modal=document.getElementById('xmodal'), mframe=document.getElementById('xframe'),
       mtitle=document.getElementById('xtitle'), mopen=document.getElementById('xopen');
-function showModal(url,full,title){ if(!XP||!XP.companion||MODALMODE) return;
-  mframe.src=url; mtitle.textContent=title; mopen.href=full; modal.style.display='flex'; }
-function hideModal(){ if(modal){ modal.style.display='none'; mframe.src='about:blank'; } }
-function crossProbeNet(net){ const xi=xnetOfNet(net); if(xi==null) return;
-  const xn=XP.xnets[xi], D='?doc='+encodeURIComponent(DOCID); showModal(XP.companion+D+'&xnet='+xi+'&modal=1', XP.companion+D+'&xnet='+xi, 'Schematic · '+(xn.name||('net '+xi))); }
-function crossProbeRef(ref){ const D='?doc='+encodeURIComponent(DOCID)+'&ref='+encodeURIComponent(ref); showModal(XP.companion+D+'&modal=1', XP.companion+D, 'Schematic · '+ref); }
+// Companion (schematic) URL preserving doc/rev/diff, so "Open full" lands on the
+// same revision in this same tab.
+function companionUrl(extra){ const u=new URLSearchParams(location.search); ['ref','xnet','xcolor','modal'].forEach(k=>u.delete(k));
+  for(const k in extra) u.set(k,extra[k]); return XP.companion+'?'+u.toString(); }
+// The preview iframe loads once, then retargets via postMessage — so hovering nets
+// updates the peek instantly instead of reloading the whole schematic each time.
+let _mReady=false, _mPending=null, _mLoaded=false;
+if(mframe) mframe.addEventListener('load',()=>{ _mReady=true; if(_mPending){ mframe.contentWindow.postMessage(_mPending,'*'); _mPending=null; } });
+function showProbe(target,title,peek){ if(!XP||!XP.companion||MODALMODE) return;
+  mtitle.textContent=title; mopen.href=companionUrl(target);
+  modal.classList.toggle('peek',!!peek); modal._peek=!!peek; modal.style.display='flex';
+  const payload={type:'xprobe', ...target};
+  if(!_mLoaded){ _mLoaded=true; _mReady=false; mframe.src=companionUrl(target)+'&modal=1'; _mPending=payload; }
+  else if(_mReady) mframe.contentWindow.postMessage(payload,'*'); else _mPending=payload; }
+function hideModal(){ if(modal){ modal.style.display='none'; modal.classList.remove('peek'); modal._peek=false; } }
+function crossProbeNet(net,peek){ const xi=xnetOfNet(net); if(xi==null){ if(peek&&modal._peek) hideModal(); return; }
+  showProbe({xnet:''+xi}, 'Schematic · '+(XP.xnets[xi].name||('net '+xi)), peek); }
+function crossProbeRef(ref){ showProbe({ref:ref}, 'Schematic · '+ref, false); }
 function bind(){
   // delegated once on the scene container (survives innerHTML re-renders), instead of
   // (re-)attaching three listeners to every pad on each render.
@@ -596,7 +658,7 @@ function pick(e){   // what's under the cursor — a part (its pad) takes priori
   const b=boardXY(e); const n=pickTraceNet(b[0],b[1]);
   return n!=null ? {net:n} : null;
 }
-let drag=null, down=null, hoverKey=null;
+let drag=null, down=null, hoverKey=null, _peekT=null;
 const pinned=()=>pinnedNet!==null||pinnedRef!==null;
 svg.addEventListener('pointerdown',e=>{ if(MODALMODE)return; down={x:e.clientX,y:e.clientY,moved:false}; if(e.target.closest('.pad'))return; drag={x:e.clientX,y:e.clientY,vx:view.x,vy:view.y}; svg.setPointerCapture(e.pointerId); });
 svg.addEventListener('pointermove',e=>{
@@ -608,23 +670,30 @@ svg.addEventListener('pointermove',e=>{
     if(key!==hoverKey){ hoverKey=key; hoverRef=p&&p.ref||null; hoverNet=(p&&p.net!=null)?new Set([p.net]):null; updateHighlight();
       if(p&&p.net!=null&&_rootName[p.net]){ tip.textContent=_rootName[p.net]; tip.style.left=(e.clientX+14)+'px'; tip.style.top=(e.clientY+8)+'px'; tip.style.opacity=1; }
       else if(!p||p.net!=null) tip.style.opacity=0;
+      // peek the schematic for the hovered net (debounced; iframe retargets via postMessage)
+      clearTimeout(_peekT);
+      if(p&&p.net!=null){ const nn=p.net; _peekT=setTimeout(()=>{ if(hoverKey==='n:'+nn) crossProbeNet(new Set([nn]),true); }, 200); }
+      else if(modal._peek) hideModal();
     }
   }
 });
-svg.addEventListener('pointerleave',()=>{ if(!pinned() && hoverKey!==null){ hoverKey=null; hoverRef=null; hoverNet=null; updateHighlight(); } });
+svg.addEventListener('pointerleave',()=>{ clearTimeout(_peekT); if(modal._peek) hideModal();
+  if(!pinned() && hoverKey!==null){ hoverKey=null; hoverRef=null; hoverNet=null; updateHighlight(); } });
 svg.addEventListener('pointerup',e=>{
   if(MODALMODE)return;
   if(down && !down.moved){
     if(Comments.isPlacing()){ Comments.place(e.clientX,e.clientY); drag=null; down=null; return; }
     const p=pick(e); hoverKey=null; hoverRef=null; hoverNet=null;
-    if(!p){ pinnedNet=null; pinnedRef=null; updateHighlight(); hideModal(); }
+    if(!p){ pinnedList=[]; pinnedRef=null; syncPinnedNet(); updateHighlight(); renderNetLegend(); hideModal(); }
     else if(p.ref){                                 // a part → highlight it + preview it in the schematic
       if(pinnedRef===p.ref){ pinnedRef=null; updateHighlight(); hideModal(); }
-      else { pinnedRef=p.ref; pinnedNet=null; updateHighlight(); crossProbeRef(p.ref); }
-    } else {                                         // a trace → highlight the net + preview it
-      const n=p.net;
-      if(pinnedNet && pinnedNet.has(n)){ pinnedNet=null; updateHighlight(); hideModal(); }
-      else { const xi=xnetOfNet(new Set([n])); pinnedNet=(xi!=null?xnetRoots[xi]:new Set([n])); pinnedRef=null; updateHighlight(); crossProbeNet(pinnedNet); }
+      else { pinnedRef=p.ref; pinnedList=[]; syncPinnedNet(); updateHighlight(); renderNetLegend(); crossProbeRef(p.ref); }
+    } else {                                         // a trace → toggle the net in the coloured highlight set
+      const n=p.net, hit=pinnedList.findIndex(pl=>pl.roots.has(n));
+      if(hit>=0){ pinnedList.splice(hit,1); syncPinnedNet(); updateHighlight(); renderNetLegend(); hideModal(); }
+      else { const xi=xnetOfNet(new Set([n])), roots=(xi!=null?xnetRoots[xi]:new Set([n]));
+        pinnedRef=null; pinnedList.push({ roots, color:nextColor(), name:netNameOf(xi,n), xnet:(xi!=null?xi:null) });
+        syncPinnedNet(); updateHighlight(); renderNetLegend(); crossProbeNet(roots); }
     }
   }
   drag=null; down=null;
@@ -632,6 +701,7 @@ svg.addEventListener('pointerup',e=>{
 svg.addEventListener('wheel',e=>{ if(MODALMODE)return; e.preventDefault(); const r=svg.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;
   const f=Math.exp(-e.deltaY*0.0015),nk=view.k*f; view.x=mx-(mx-view.x)*(nk/view.k); view.y=my-(my-view.y)*(nk/view.k); view.k=nk; applyView(); },{passive:false});
 document.getElementById('fit').onclick=fit;
+document.getElementById('to-sch').onclick=()=>location.href=schematicHref();
 document.getElementById('flip').onclick=e=>{ flipped=!flipped; e.currentTarget.style.background=flipped?'#EFE9DB':''; render(); if(window.Comments&&Comments.reproject) Comments.reproject(); };
 document.getElementById('zi').onclick=()=>zoomBy(1.3);
 document.getElementById('zo').onclick=()=>zoomBy(0.77);
@@ -706,19 +776,26 @@ if(!MODALMODE) Comments.init({
 let _curKeep=undefined;                            // currently isolated layer (null=all shown)
 function applyTarget(t){
   t=t||{};
-  pinnedNet=null; pinnedRef=null; hoverNet=null; hoverRef=null;
+  pinnedList=[]; pinnedRef=null; hoverNet=null; hoverRef=null;
   let keep=null, part=null;
   if(t.ref){ part=M.parts.find(q=>q.ref===t.ref); if(part){ pinnedRef=t.ref; keep=part.side?_LN[_LN.length-1]:_LN[0]; } }
-  else if(t.xnet!=null && xnetRoots[+t.xnet]){ pinnedNet=xnetRoots[+t.xnet]; }
+  else {                                            // one or more xnets → highlight each in its colour
+    const xs=(t.xnets!=null?t.xnets:(t.xnet!=null?[+t.xnet]:[])).filter(i=>xnetRoots[i]);
+    const cols=t.xcolors||[];
+    pinnedList=xs.map((i,k)=>({ roots:xnetRoots[i], color:(cols[k]||PALETTE[k%PALETTE.length]), name:netNameOf(i), xnet:i }));
+  }
+  syncPinnedNet();
   if(keep!==_curKeep){                             // layer visibility changed → full re-render
     _curKeep=keep; hiddenLayers.clear(); if(keep!=null) _LN.forEach(l=>{ if(l!==keep) hiddenLayers.add(l); });
     renderLayers(); render();
   } else updateHighlight();                         // same layers → cheap overlay update
-  if(pinnedNet) zoomToBox(XP.xnets[+t.xnet].bbox,0.5);
+  renderNetLegend();
+  if(pinnedXnets.length && XP) zoomToBox(XP.xnets[pinnedXnets[0]].bbox,0.5);
   else if(part) zoomToBox(refBox(t.ref),0.25,12000);
 }
-function applyParams(){ const xnet=QP.get('xnet'), ref=QP.get('ref');
-  if(xnet!==null) applyTarget({xnet:+xnet}); else if(ref) applyTarget({ref}); }
+function applyParams(){ const xnet=QP.get('xnet'), xcolor=QP.get('xcolor'), ref=QP.get('ref');
+  if(xnet!==null) applyTarget({xnets: xnet.split(',').map(s=>+s), xcolors:(xcolor||'').split(',').map(c=>c?('#'+c):'')});
+  else if(ref) applyTarget({ref}); }
 window.addEventListener('message',e=>{ const d=e.data; if(d&&d.type==='xprobe') applyTarget(d); });
 if(QP.get('xnet')!==null || QP.get('ref')){
   if(document.readyState==='complete') setTimeout(applyParams,40);

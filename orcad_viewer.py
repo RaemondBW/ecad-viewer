@@ -301,7 +301,7 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
   <div class="xtop" style="display:flex;align-items:center;gap:12px;height:54px;padding:0 14px;background:#FBFAF7;border-bottom:1px solid #E0DCD1;flex-shrink:0;z-index:40;position:relative">
     <button id="tb-sheets-btn" class="tbtn" style="display:none">Sheets</button>
     <button class="tbtn" onclick="location.href='../'" title="Back to projects" style="flex-shrink:0">&#8592; Projects</button>
-    <button class="tbtn" onclick="location.href='layout/'+location.search" title="View the board layout" style="flex-shrink:0">Layout</button>
+    <button class="tbtn" id="to-lay" title="View the board layout" style="flex-shrink:0">Layout</button>
     <div style="width:1px;height:26px;background:#E0DCD1;flex-shrink:0"></div>
     <div style="display:flex;flex-direction:column;gap:1px;min-width:0">
       <div id="tb-name" style="font-size:14px;font-weight:700;letter-spacing:.01em;line-height:1.15;white-space:nowrap">Schematic</div>
@@ -631,6 +631,9 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
 let M = null;              // in shell mode the model is fetched from the backend after
 let XP = null;             // sign-in; in embedded mode /*__BOOT__*/ calls __renderModel now
 const DOCID = new URLSearchParams(location.search).get('doc') || '';
+// Layout URL preserving doc/rev/diff, so cross-probe "Open full" stays on the same
+// revision in the same tab.
+function companionHref(extra){ const u = new URLSearchParams(location.search); ['ref','xnet','xcolor','modal'].forEach(k=>u.delete(k)); for(const k in (extra||{})) u.set(k, extra[k]); return XP.companion + '?' + u.toString(); }
 /*__CMT_JS__*/
 const R = window.SchRender, esc = R.esc;
 const $ = id => document.getElementById(id);
@@ -656,10 +659,10 @@ function ensureShell() {
     `<div id="ins-head" style="display:flex;align-items:center;justify-content:space-between;padding:10px 10px 6px 16px;cursor:move;user-select:none">` +
       `<span id="ins-label" style="font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#8B8578">Part</span>` +
       `<span style="display:flex;align-items:center;gap:10px">` +
-        `<a id="ins-open" target="_blank" style="font-size:10.5px;color:#2563a8;text-decoration:none;display:none">Open full ↗</a>` +
+        `<a id="ins-open" style="font-size:10.5px;color:#2563a8;text-decoration:none;display:none">Open full →</a>` +
         `<button id="ins-x" class="iconx" style="cursor:pointer">&times;</button></span></div>` +
     `<div id="ins-preview" style="display:none;border-bottom:1px solid #EAE6DA"><iframe id="ins-frame"` +
-      (XP && XP.companion ? ` src="${XP.companion}?doc=${encodeURIComponent(DOCID)}&modal=1"` : '') +
+      (XP && XP.companion ? ` src="${companionHref({ modal: '1' })}"` : '') +
       ` style="width:100%;height:190px;border:0;display:block;background:#0e0c08"></iframe></div>` +
     `<div id="ins-card"></div>`;
   $('ins-x').addEventListener('click', closeSel);
@@ -747,20 +750,34 @@ function init() {
   // cross-probe: hide chrome when embedded, wire the modal, apply URL params
   if (XMODAL) document.body.classList.add('xmodal');
   const _xn = XQP.get('xnet'), _xr = XQP.get('ref');
-  if (_xn !== null && XP && XP.xnets[+_xn]) { const k = XP.xnets[+_xn].sch; goNet(k, [...(netSheets.get(k) || [])]); centerNet(k); }
-  else if (_xr) {
-    let bi = -1, bp = -1;   // sheet with the most pins of this refdes = the meaningful view
-    for (let i = 0; i < M.sheets.length; i++) {
-      const tot = M.sheets[i].parts.filter(p => p.des === _xr).reduce((n, p) => n + (p.pins || []).length, 0);
-      if (tot > bp) { bp = tot; bi = i; }
-    }
-    if (bp > 0) {
+  // Apply a cross-probe target (from ?xnet/?ref on load, or a postMessage from the
+  // layout's preview modal so hovering nets there retargets this view without a reload).
+  const applyXprobe = t => {
+    if (!t) return;
+    if (t.xnet != null && XP && XP.xnets) {
+      const idxs = ('' + t.xnet).split(',').map(s => +s).filter(i => XP.xnets[i] && XP.xnets[i].sch != null);
+      if (!idxs.length) return;
+      clearPins();
+      const k0 = XP.xnets[idxs[0]].sch;
+      goNet(k0, [...(netSheets.get(k0) || [])]);          // navigate to the first net's sheet + pin it
+      idxs.slice(1).forEach(i => pinNet(XP.xnets[i].sch)); // pin the rest
+      applyPins(); renderStatus(); renderSidebar(); centerNet(k0);
+    } else if (t.ref) {
+      let bi = -1, bp = -1;   // sheet with the most pins of this refdes = the meaningful view
+      for (let i = 0; i < M.sheets.length; i++) {
+        const tot = M.sheets[i].parts.filter(p => p.des === t.ref).reduce((n, p) => n + (p.pins || []).length, 0);
+        if (tot > bp) { bp = tot; bi = i; }
+      }
+      if (bp <= 0) return;
       if (XMODAL) {                    // clean preview: highlight + fit the part, no card / mini-map
         if (bi !== cur) { cur = bi; renderScene(); fit(); updChrome(); renderSidebar(); }
-        selDes = _xr; updateSelMark(); fitPart(_xr);
-      } else goToPart(bi, _xr);
+        selDes = t.ref; updateSelMark(); fitPart(t.ref);
+      } else goToPart(bi, t.ref);
     }
-  }
+  };
+  if (_xn !== null) applyXprobe({ xnet: _xn });
+  else if (_xr) applyXprobe({ ref: _xr });
+  window.addEventListener('message', e => { const d = e.data; if (d && d.type === 'xprobe') applyXprobe(d); });
   // ---- comments: anchor to a part, a net, or an open point (per sheet) ----
   if (!XMODAL) {
     window.__cmtContext = () => 'sch:' + (M.name || '') + ':' + cur;   // shared with the Firebase backend bootstrap
@@ -1025,6 +1042,18 @@ function goNet(k, pages) {
   if (!pages.includes(cur) && pages.length) { cur = pages[0]; selDes = null; renderScene(); fit(); updChrome(); renderInspector(); }
   pinNet(k);
 }
+// Cross-probe: carry the highlighted nets to the layout view as ?xnet=i,j,k
+// (the layout consumes the same param on load). Only nets that have a layout
+// counterpart in the correspondence table travel.
+function layoutHref() {
+  const u = new URLSearchParams(location.search); u.delete('ref');
+  const xs = [], xc = [];
+  const add = (key, color) => { if (key != null && schToXnet.has(key)) { const i = schToXnet.get(key); if (!xs.includes(i)) { xs.push(i); xc.push((color || PALETTE[0]).replace('#', '')); } } };
+  pinNets.forEach(p => add(p.key, p.color));                 // carry each pinned net + its colour
+  if (selNet != null && !isPinned(selNet)) add(selNet, PALETTE[0]);
+  if (xs.length) { u.set('xnet', xs.join(',')); u.set('xcolor', xc.join(',')); } else { u.delete('xnet'); u.delete('xcolor'); }
+  return 'layout/?' + u.toString();
+}
 function centerNet(k) {   // fit the view around a net's wires/pins on the current sheet
   const els = [...sceneEl.querySelectorAll('[data-net]')].filter(el => el.dataset.net === k);
   let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
@@ -1217,7 +1246,7 @@ function renderNetCard() {
   $('ins-label').textContent = 'Net';
   const k = selNet, xi = schToXnet.has(k) ? schToXnet.get(k) : null;
   const also = [...(netSheets.get(k) || [])].filter(i => i !== cur).map(i => sheetLabel(i));
-  driveFrame(xi != null && XP && XP.companion ? { xnet: xi, href: XP.companion + '?doc=' + encodeURIComponent(DOCID) + '&xnet=' + xi } : null);
+  driveFrame(xi != null && XP && XP.companion ? { xnet: xi, href: companionHref({ xnet: xi }) } : null);
   $('ins-card').innerHTML =
     `<div style="padding:8px 16px 12px;border-bottom:1px solid #EAE6DA">` +
     `<div style="font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:600;color:#221F1A;word-break:break-all">${esc(netName(k) || k)}</div>` +
@@ -1241,7 +1270,7 @@ function renderInspector() {
   ensureShell(); ins.style.display = 'block';
   $('ins-label').textContent = 'Part';
   const inLayout = !(XP && XP.layoutRefs) || layoutRefs.has(sel.des);
-  driveFrame(inLayout && XP && XP.companion ? { ref: sel.des, href: XP.companion + '?doc=' + encodeURIComponent(DOCID) + '&ref=' + encodeURIComponent(sel.des) } : null);
+  driveFrame(inLayout && XP && XP.companion ? { ref: sel.des, href: companionHref({ ref: sel.des }) } : null);
   const diffNote = diffReason(selDes).trim();
   const pins = [];
   secs.forEach((sc, k) => (sc.p.pins || []).forEach(pin => pins.push({
@@ -1341,6 +1370,7 @@ function toggleTheme() {
 }
 function bindToolbar() {
   $('tb-sheets-btn').addEventListener('click', toggleSheets);
+  $('to-lay').addEventListener('click', () => location.href = layoutHref());
   const moreMenu = $('tb-more-menu');
   $('tb-more').addEventListener('click', e => { e.stopPropagation(); moreMenu.style.display = moreMenu.style.display === 'none' ? 'block' : 'none'; });
   document.addEventListener('click', () => { if (moreMenu) moreMenu.style.display = 'none'; });
