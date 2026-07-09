@@ -237,9 +237,6 @@ html,body{margin:0;height:100%;overflow:hidden;background:#E9E7E1;font-family:'I
 .tbtn:hover{border-color:#B9B3A2;background:#F7F5EF}
 #stage{position:absolute;inset:54px 0 0 0;overflow:hidden;background:#E9E7E1}
 #svg{width:100%;height:100%;display:block;cursor:default;touch-action:none;user-select:none}
-#legend{position:absolute;right:12px;bottom:12px;background:rgba(251,250,247,.94);border:1px solid #E0DCD1;border-radius:10px;padding:8px 10px;font-size:11px;display:flex;flex-wrap:wrap;gap:4px 12px;max-width:44%}
-#legend span{display:inline-flex;align-items:center;gap:5px;font-family:'IBM Plex Mono',monospace;color:#57524A}
-#legend i{width:9px;height:9px;border-radius:2px;display:inline-block}
 #layers{position:absolute;left:12px;top:12px;background:rgba(251,250,247,.96);border:1px solid #E0DCD1;border-radius:10px;padding:9px 11px;font-size:11.5px;display:flex;flex-direction:column;gap:3px;box-shadow:0 6px 18px rgba(20,16,8,.12)}
 #layers .lh{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8B8578;margin-bottom:3px}
 #layers .lyr{display:flex;align-items:center;gap:7px;cursor:pointer;user-select:none;padding:2px 3px;border-radius:5px;font-family:'IBM Plex Mono',monospace;color:#43403A}
@@ -250,15 +247,13 @@ html,body{margin:0;height:100%;overflow:hidden;background:#E9E7E1;font-family:'I
 .board{fill:#1c2a25;stroke:#0e1512}
 .cu{stroke-opacity:.85;fill:none;stroke-linecap:round;stroke-linejoin:round}
 .pour{fill-opacity:.20;fill-rule:evenodd;stroke-width:0}
-#legend .lyr{cursor:pointer;user-select:none}
-#legend .lyr.off{opacity:.32;text-decoration:line-through}
 .via{fill:#C9CCD1;stroke:#3a3f45;stroke-width:200}
 #scene.dim .cu,#scene.dim .via,#scene.dim .pad,#scene.dim .clbl{opacity:.4}
 .hl{stroke:#FFF3C4;fill:none;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:.95}
 .hlv,.hlp{fill:none;stroke:#FFF3C4;stroke-width:2.5;vector-effect:non-scaling-stroke}
 .hlr{stroke:#8FD0FF}
 /* iframe-embed mode: hide chrome, let the net fill the frame */
-body.modal #bar,body.modal #layers,body.modal #legend{display:none!important}
+body.modal #bar,body.modal #layers{display:none!important}
 body.modal #stage{inset:0!important}
 body.modal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom/hover/click */
 /* cross-probe modal */
@@ -287,9 +282,6 @@ body.modal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom/
   <div style="width:1px;height:22px;background:var(--line,#D9D4C6);flex-shrink:0"></div>
   <div><div class="name" id="nm">PCB</div><div class="sub" id="sub"></div></div>
   <div style="flex:1"></div>
-  <button class="tbtn" id="cu" style="border-color:#C98A3A;color:#9A5A18">● Copper</button>
-  <button class="tbtn" id="vi" style="border-color:#9AA0A8;color:#5A6068">● Vias</button>
-  <button class="tbtn" id="cp" style="border-color:#8FA88F;color:#3d5a3d">● Parts</button>
   <button class="tbtn" id="cmt-btn" title="Add / view comments">💬 Comment</button>
   <button class="tbtn" id="flip" title="Mirror the board horizontally (view from the back)">Flip</button>
   <button class="tbtn" id="fit">Fit</button>
@@ -302,7 +294,7 @@ body.modal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom/
   <div id="tb-rev" style="display:none;position:relative;flex-shrink:0"></div>
   <div id="cmt-account" style="margin-left:6px;flex-shrink:0"></div>
 </div>
-<div id="stage"><svg id="svg"><g id="scene"></g><g id="hlg"></g></svg><div id="layers"></div><div id="legend"></div></div>
+<div id="stage"><svg id="svg"><g id="scene"></g><g id="hlg"></g></svg><div id="layers"></div></div>
 <div id="tip"></div>
 <div id="xmodal"><div id="xbox">
   <div id="xhead"><span id="xtitle"></span><a id="xopen" target="_blank">Open full ↗</a><button id="xclose">✕</button></div>
@@ -327,8 +319,19 @@ const DIFF = (function(){
   for(const r in o) if(!(r in n)) removed.push(o[r]);
   for(const r in n) if(r in o){ const dx=n[r].x-o[r].x, dy=n[r].y-o[r].y;
     if(Math.abs(dx)+Math.abs(dy)>5000) moved.push({ref:r, ox:o[r].x, oy:o[r].y, nx:n[r].x, ny:n[r].y}); }
-  return { added, removed, moved,
-    oldTraces: oldModel.copper.length/stride(oldModel)|0, newTraces: M.copper.length/stride(M)|0,
+  // copper diff: key each segment by its (orientation-independent) endpoints+layer
+  const so=stride(oldModel), sn=stride(M);
+  const segKey=(C,i)=>{ let ax=C[i],ay=C[i+1],bx=C[i+2],by=C[i+3];
+    if(ax>bx||(ax===bx&&ay>by)){const t=ax;ax=bx;bx=t;const u=ay;ay=by;by=u;}
+    return ax+','+ay+','+bx+','+by+','+C[i+4]; };
+  const oset=new Set(); for(let i=0;i<oldModel.copper.length;i+=so) oset.add(segKey(oldModel.copper,i));
+  const nset=new Set(); for(let i=0;i<M.copper.length;i+=sn) nset.add(segKey(M.copper,i));
+  const addedCu=[], removedCu=[];
+  for(let i=0;i<M.copper.length;i+=sn) if(!oset.has(segKey(M.copper,i))) addedCu.push(M.copper[i],M.copper[i+1],M.copper[i+2],M.copper[i+3]);
+  for(let i=0;i<oldModel.copper.length;i+=so) if(!nset.has(segKey(oldModel.copper,i))) removedCu.push(oldModel.copper[i],oldModel.copper[i+1],oldModel.copper[i+2],oldModel.copper[i+3]);
+  const chg=new Set([...added,...removed].map(p=>p.ref).concat(moved.map(m=>m.ref)));
+  return { added, removed, moved, addedCu, removedCu, chg,
+    oldTraces: oldModel.copper.length/so|0, newTraces: M.copper.length/sn|0,
     oldVias: (oldModel.vias||[]).length/vstride(oldModel)|0, newVias: (M.vias||[]).length/vstride(M)|0,
     label: 'rev ' + ((window.__docMeta||{}).diffRev || '?') };
 })();
@@ -380,6 +383,15 @@ function outlineSVG(){
   for(let i=2;i<p.length;i+=2) dd+='L'+FX(p[i])+' '+flipY(p[i+1]);
   return `<path d="${dd}Z" fill="none" stroke="#8A8577" stroke-width="${minW*4}" stroke-dasharray="${minW*16} ${minW*10}"/>`;
 }
+function diffCopperSVG(){
+  if(!DIFF) return '';
+  let h='';
+  const draw=(arr,col,w,dash)=>{ let d=''; for(let i=0;i<arr.length;i+=4) d+=`M${FX(arr[i])} ${flipY(arr[i+1])}L${FX(arr[i+2])} ${flipY(arr[i+3])}`;
+    return d?`<path d="${d}" stroke="${col}" stroke-width="${w}" fill="none" stroke-linecap="round"${dash?` stroke-dasharray="${dash}"`:''}/>`:''; };
+  h+=draw(DIFF.removedCu,'#CF222E',minW*2.6,`${minW*10} ${minW*7}`);   // gone (was in old rev)
+  h+=draw(DIFF.addedCu,'#1A7F37',minW*2.6,'');                          // new routing this rev
+  return h;
+}
 function diffSVG(){
   if(!DIFF) return '';
   const R=9000; let h='';
@@ -394,8 +406,10 @@ function diffSVG(){
 function render(){
   let h=`<rect class="board" x="${x0-PAD}" y="${flipY(y1)-PAD}" width="${W+2*PAD}" height="${H+2*PAD}" rx="${PAD*0.3}"/>`;
   h+=outlineSVG();
-  if(showCopper && M.copper.length) h+=poursSVG()+copperPaths();
-  if(showVias) h+=viasSVG();
+  // In diff mode the unchanged board fades back so the copper add/remove overlay reads clearly.
+  let b='';                            // base ink (dimmed under a diff)
+  if(showCopper && M.copper.length) b+=poursSVG()+copperPaths();
+  if(showVias) b+=viasSVG();
   let gi=0;                            // global pad index (matches buildNets order)
   if(showParts) for(const p of M.parts){
     const np=p.pads.length;
@@ -409,12 +423,13 @@ function render(){
     for(const pd of pads){
       const pa=`${da} data-pi="${np?gi+li:-1}"`; li++;
       const w=pd[2]-pd[0], hh=pd[3]-pd[1];       // already capped to pitch in build()
-      if(pd[4]){ h+=`<ellipse class="pad" ${pa} cx="${FX(pd[0]+w/2)}" cy="${flipY(pd[1]+hh/2)}" rx="${w/2}" ry="${hh/2}" fill="${padC}"/>`; }
-      else { h+=`<rect class="pad" ${pa} x="${FX(pd[0]+w/2)-w/2}" y="${flipY(pd[3])}" width="${w}" height="${hh}" rx="${Math.min(w,hh)*0.12}" fill="${padC}"/>`; }
+      if(pd[4]){ b+=`<ellipse class="pad" ${pa} cx="${FX(pd[0]+w/2)}" cy="${flipY(pd[1]+hh/2)}" rx="${w/2}" ry="${hh/2}" fill="${padC}"/>`; }
+      else { b+=`<rect class="pad" ${pa} x="${FX(pd[0]+w/2)-w/2}" y="${flipY(pd[3])}" width="${w}" height="${hh}" rx="${Math.min(w,hh)*0.12}" fill="${padC}"/>`; }
     }
-    h+=`<text class="clbl" ${da} x="${FX(p.x)}" y="${flipY(p.y)}" font-size="${LBL}">${esc(p.ref)}</text>`;
+    b+=`<text class="clbl" ${da} x="${FX(p.x)}" y="${flipY(p.y)}" font-size="${LBL}">${esc(p.ref)}</text>`;
     gi+=np;
   }
+  h += DIFF ? `<g opacity="0.16">${b}</g>` + diffCopperSVG() : b;
   h+=diffSVG();
   scene.innerHTML=h;
   bind();
@@ -616,29 +631,25 @@ svg.addEventListener('pointerup',e=>{
 });
 svg.addEventListener('wheel',e=>{ if(MODALMODE)return; e.preventDefault(); const r=svg.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;
   const f=Math.exp(-e.deltaY*0.0015),nk=view.k*f; view.x=mx-(mx-view.x)*(nk/view.k); view.y=my-(my-view.y)*(nk/view.k); view.k=nk; applyView(); },{passive:false});
-document.getElementById('cu').onclick=e=>{ showCopper=!showCopper; e.currentTarget.style.opacity=showCopper?1:0.45; render(); };
-document.getElementById('vi').onclick=e=>{ showVias=!showVias; e.currentTarget.style.opacity=showVias?1:0.45; render(); };
-document.getElementById('cp').onclick=e=>{ showParts=!showParts; e.currentTarget.style.opacity=showParts?1:0.45; render(); };
 document.getElementById('fit').onclick=fit;
 document.getElementById('flip').onclick=e=>{ flipped=!flipped; e.currentTarget.style.background=flipped?'#EFE9DB':''; render(); if(window.Comments&&Comments.reproject) Comments.reproject(); };
 document.getElementById('zi').onclick=()=>zoomBy(1.3);
 document.getElementById('zo').onclick=()=>zoomBy(0.77);
 window.addEventListener('resize',fit);
-// left panel: clickable copper layers  ·  bottom legend: component types
+// left panel: clickable copper layers
+// Copper layers are ordered top→bottom (ETCH subclass index ascending). Name them
+// by their position in the stackup: outer layers Top/Bottom, the rest Inner N.
+function layerName(i,n){ return i===0?'Top':(i===n-1?'Bottom':'Inner '+i); }
 function renderLayers(){
-  const rows=(M.layers||[]).map(l=>`<div class="lyr${hiddenLayers.has(l)?' off':''}" data-l="${l}"><i style="background:${M.layerColors[l]}"></i>Layer ${l}</div>`).join('');
+  const n=(M.layers||[]).length;
+  const rows=(M.layers||[]).map((l,i)=>`<div class="lyr${hiddenLayers.has(l)?' off':''}" data-l="${l}"><i style="background:${M.layerColors[l]}"></i>${layerName(i,n)}</div>`).join('');
   const oRow=(M.outline&&M.outline.length)?`<div class="lyr${showOutline?'':' off'}" data-l="outline"><i style="background:#8A8577"></i>Outline</div>`:'';
   document.getElementById('layers').innerHTML='<div class="lh">Copper layers</div>'+rows+oRow;
   document.getElementById('layers').querySelectorAll('.lyr').forEach(el=>el.onclick=()=>{
     if(el.dataset.l==='outline'){ showOutline=!showOutline; renderLayers(); render(); return; }
     const l=+el.dataset.l; if(hiddenLayers.has(l))hiddenLayers.delete(l);else hiddenLayers.add(l); renderLayers(); render();});
 }
-function renderLegend(){
-  const seen={}; M.parts.forEach(p=>seen[p.t]=1);
-  document.getElementById('legend').innerHTML=Object.keys(seen).sort().map(t=>{const ty=M.types[t]||{label:t,color:'#6E6A60'};
-    return `<span><i style="background:${ty.color}"></i>${esc(ty.label||t)}</span>`;}).join('');
-}
-renderLayers(); renderLegend();
+renderLayers();
 document.getElementById('nm').textContent=M.name;
 document.getElementById('sub').textContent=M.parts.length+' components · '+((M.copper||[]).length/7|0)+' traces · '+((M.vias||[]).length/4|0)+' vias · '+(M.layers||[]).length+' layers';
 if(MODALMODE) document.body.classList.add('modal');
@@ -650,7 +661,9 @@ if(DIFF){ const el=document.getElementById('sub');
     ` <span style="padding:1px 6px;border-radius:9px;background:rgba(26,127,55,.14);color:#1A7F37">+${DIFF.added.length}</span>`+
     ` <span style="padding:1px 6px;border-radius:9px;background:rgba(207,34,46,.13);color:#CF222E">&#8722;${DIFF.removed.length}</span>`+
     ` <span style="padding:1px 6px;border-radius:9px;background:rgba(154,103,0,.16);color:#9A6700">&#8703;${DIFF.moved.length} moved</span>`+
-    (DIFF.newTraces!==DIFF.oldTraces?` <span style="color:#8B8578">traces ${DIFF.oldTraces}&#8594;${DIFF.newTraces}</span>`:'')+
+    ((DIFF.addedCu.length||DIFF.removedCu.length)?` &nbsp;<span style="color:#8B8578">copper</span>`+
+       ` <span style="padding:1px 6px;border-radius:9px;background:rgba(26,127,55,.14);color:#1A7F37">+${DIFF.addedCu.length/4|0}</span>`+
+       ` <span style="padding:1px 6px;border-radius:9px;background:rgba(207,34,46,.13);color:#CF222E">&#8722;${DIFF.removedCu.length/4|0}</span> segs`:'')+
     (DIFF.newVias!==DIFF.oldVias?` <span style="color:#8B8578">vias ${DIFF.oldVias}&#8594;${DIFF.newVias}</span>`:''); }
 (function renderRevUI(){
   const meta=window.__docMeta, el=document.getElementById('tb-rev');
@@ -672,6 +685,9 @@ if(DIFF){ const el=document.getElementById('sub');
 if(!MODALMODE) window.__cmtContext='brd:'+(M.name||'');   // shared with the Firebase backend bootstrap
 if(!MODALMODE) Comments.init({
   context:window.__cmtContext, svg:svg, stage:document.getElementById('stage'),
+  rev:()=>(window.__docMeta||{}).curRev||1,          // comments locked to their rev
+  latestRev:()=>(window.__docMeta||{}).rev||1,       // legacy (unversioned) comments belong to latest
+  diffRev:()=>(window.__docMeta||{}).diffRev||null,  // diff view shows both (new / gone)
   button:document.getElementById('cmt-btn'),
   project:(x,y)=>({sx:FX(x)*view.k+view.x, sy:flipY(y)*view.k+view.y}),
   resolveAnchor:(cx,cy)=>{

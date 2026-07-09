@@ -101,11 +101,33 @@ def _attach_diff(model, old_design, new_design, old_name):
     old_sheets = oc.build_sheets(old_design)["sheets"]
     ghosts = {}
     for s in old_sheets:
-        gs = [{"des": p["des"], "box": p["box"]}
+        gs = [{"des": p["des"], "box": p["box"], "sym": p["sym"],
+               "pins": p["pins"], "val": p.get("val"), "pkg": p["pkg"]}
               for p in s["parts"] if p["des"] in removed and p["box"]]
         if gs:
             ghosts[s["id"]] = gs
     model["removedGeom"] = ghosts
+
+    def wkey(w):   # orientation-independent; MUST match the JS wkey string form
+        a, b = (round(w[0]), round(w[1])), (round(w[2]), round(w[3]))
+        if a > b:
+            a, b = b, a
+        return f"{a[0]},{a[1]},{b[0]},{b[1]}"
+    old_by_id = {s["id"]: s for s in old_sheets}
+    new_by_id = {s["id"]: s for s in model["sheets"]}
+    added_wires, removed_wires = {}, {}
+    for s in model["sheets"]:
+        oset = {wkey(w) for w in old_by_id.get(s["id"], {}).get("wires", [])}
+        a = [wkey(w) for w in s.get("wires", []) if wkey(w) not in oset]
+        if a:
+            added_wires[s["id"]] = a
+    for s in old_sheets:
+        ns = {wkey(w) for w in new_by_id.get(s["id"], {}).get("wires", [])}
+        r = [w for w in s.get("wires", []) if wkey(w) not in ns]
+        if r:
+            removed_wires[s["id"]] = r
+    model["addedWires"] = added_wires
+    model["removedWires"] = removed_wires
 
 
 def generate(dsn_path, out_path, diff_path=None, xprobe=None, shell=False):
@@ -155,6 +177,9 @@ html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#E9E7E1;
 .tbtn{padding:5px 11px;font-size:12px;font-weight:500;border:1px solid #D9D4C6;border-radius:8px;
   background:#FFFFFF;cursor:pointer;color:#3A362E;font-family:inherit;flex-shrink:0}
 .tbtn:hover{border-color:#B9B3A2;background:#F7F5EF}
+.tbtn.icon{min-width:34px;padding:5px 8px;font-size:14px;line-height:1}
+.tbtn-mi{display:block;width:100%;text-align:left;padding:8px 9px;border:none;background:none;border-radius:6px;cursor:pointer;color:#221F1A;font:13px 'IBM Plex Sans',system-ui,sans-serif}
+.tbtn-mi:hover{background:#F6F3EC}
 .zbtn{border:none;background:transparent;padding:5px 9px;cursor:pointer;font-size:13px;color:#3A362E;font-family:inherit}
 .zbtn:hover{background:#F7F5EF}
 .srch{height:32px;width:270px;padding:0 10px 0 30px;font-family:'IBM Plex Mono',monospace;font-size:12px;
@@ -239,9 +264,23 @@ html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#E9E7E1;
 .sch-scene .comp.sel .sym.fill{fill:var(--p-hot)}
 .sch-scene .comp.sel text{fill:var(--p-hot)}
 .sch-scene .comp.flash{animation:schFlash .5s ease 3}
-.sch-scene .comp.add rect{stroke:var(--p-add,#1A7F37);fill:var(--p-addsoft,rgba(26,127,55,.14));stroke-width:1.6}
-.sch-scene .comp.chg rect{stroke:var(--p-chg,#9A6700);fill:var(--p-chgsoft,rgba(154,103,0,.16));stroke-width:1.6}
-.sch-scene .comp.ghost rect{stroke:var(--p-del,#CF222E);fill:var(--p-delsoft,rgba(207,34,46,.13));stroke-dasharray:4 3}
+/* diff overlay: recolor the actual component + trace, no bounding box */
+.sch-scene .comp.add .sym,.sch-scene .comp.add rect:not(.hit){stroke:var(--p-add,#1A7F37)}
+.sch-scene .comp.add .sym.fill{fill:var(--p-add,#1A7F37)}
+.sch-scene .comp.add rect:not(.hit){fill:none}
+.sch-scene .comp.add text{fill:var(--p-add,#1A7F37)}
+.sch-scene .comp.chg .sym,.sch-scene .comp.chg rect:not(.hit){stroke:var(--p-chg,#9A6700)}
+.sch-scene .comp.chg .sym.fill{fill:var(--p-chg,#9A6700)}
+.sch-scene .comp.chg rect:not(.hit){fill:none}
+.sch-scene .comp.chg text{fill:var(--p-chg,#9A6700)}
+.sch-scene .comp.ghost .sym,.sch-scene .comp.ghost rect:not(.hit){stroke:var(--p-del,#CF222E)}
+.sch-scene .comp.ghost .sym.fill{fill:var(--p-del,#CF222E)}
+.sch-scene .comp.ghost rect:not(.hit){fill:none}
+.sch-scene .comp.ghost text{fill:var(--p-del,#CF222E)}
+.sch-scene .comp.ghost{opacity:.9}
+.sch-scene .comp.add .pin,.sch-scene .comp.add circle{stroke:var(--p-add,#1A7F37)}
+.sch-scene .wire.add,.sch-scene .pin.add{stroke:var(--p-add,#1A7F37)}
+.sch-scene .wire.ghost{stroke:var(--p-del,#CF222E);opacity:.85}
 .sch-mini .mini-page{fill:var(--p-page);stroke:var(--p-pageline);stroke-width:1;vector-effect:non-scaling-stroke}
 .sch-mini .mini-wire{stroke:var(--p-wire);stroke-width:1;vector-effect:non-scaling-stroke;opacity:.5}
 .sch-mini .mini-part{fill:var(--p-comp);opacity:.35}
@@ -280,9 +319,7 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
     <div id="tb-crumb" style="font-size:10.5px;font-family:'IBM Plex Mono',monospace;color:#8B8578;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
     <div id="tb-diff" style="display:none;align-items:center;gap:6px;font-family:'IBM Plex Mono',monospace;font-size:11px"></div>
     <div style="flex:1"></div>
-    <button id="tb-theme" class="tbtn" title="Toggle canvas theme" style="min-width:52px">Dark</button>
-    <button id="tb-bom" class="tbtn">BOM</button>
-    <button id="cmt-btn" class="tbtn" title="Add / view comments">💬 Comment</button>
+    <button id="cmt-btn" class="tbtn icon" title="Add / view comments">&#128172;</button>
     <button id="tb-fit" class="tbtn">Fit</button>
     <div style="display:flex;align-items:center;border:1px solid #D9D4C6;border-radius:8px;background:#FFFFFF;overflow:hidden;flex-shrink:0">
       <button id="tb-zout" class="zbtn">&#8722;</button>
@@ -291,6 +328,13 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
     </div>
     <div id="tb-rev" style="display:none;position:relative;flex-shrink:0"></div>
     <button id="cmt-share" class="tbtn" style="display:none;flex-shrink:0" title="Share this project">Share</button>
+    <div style="position:relative;flex-shrink:0">
+      <button id="tb-more" class="tbtn icon" title="More">&#8943;</button>
+      <div id="tb-more-menu" style="display:none;position:absolute;top:40px;right:0;min-width:184px;background:#fff;border:1px solid #E0DCD1;border-radius:10px;box-shadow:0 14px 32px rgba(24,20,10,.16);padding:5px;z-index:90">
+        <button id="tb-theme" class="tbtn-mi" title="Toggle canvas theme">Dark canvas</button>
+        <button id="tb-bom" class="tbtn-mi">Bill of materials</button>
+      </div>
+    </div>
     <div id="cmt-account" style="margin-left:6px;flex-shrink:0"></div>
   </div>
   <!-- main -->
@@ -489,15 +533,22 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
       lines.forEach((ln, i) => { ts += `<tspan x="${t.x}" dy="${i === 0 ? 0 : fs * 1.15}">${esc(ln)}</tspan>`; });
       h += ts + `</text>`;
     }
+    // orientation-independent wire key, to tag added/removed traces in a diff
+    const wkey = w => { let a = [Math.round(w[0]), Math.round(w[1])], b = [Math.round(w[2]), Math.round(w[3])];
+      if (a[0] > b[0] || (a[0] === b[0] && a[1] > b[1])) { const t = a; a = b; b = t; }
+      return a[0] + ',' + a[1] + ',' + b[0] + ',' + b[1]; };
+    const addW = (diff && dctx.addedWires && dctx.addedWires[s.id]) || null;
     for (const w of s.wires) {
-      const cls = isBus(w[4]) ? 'wire bus' : 'wire';
+      let cls = isBus(w[4]) ? 'wire bus' : 'wire';
+      if (addW && addW.has(wkey(w))) cls += ' add';       // new trace this rev
       h += `<line class="${cls}" data-net="${esc(w[4])}" x1="${w[0]}" y1="${w[1]}" x2="${w[2]}" y2="${w[3]}"/>`;
     }
-    for (let _pi = 0; _pi < s.parts.length; _pi++) { const p = s.parts[_pi];
-      if (!p.box) continue;
-      let cls = 'comp';
-      if (diff) { if (addedSet.has(p.des)) cls += ' add'; else if (chgSet.has(p.des)) cls += ' chg'; }
-      h += `<g class="${cls}" data-des="${esc(p.des)}" data-pi="${_pi}" data-pkg="${esc(p.pkg)}">`;
+    if (diff) for (const w of (dctx.removedWires && dctx.removedWires[s.id]) || [])   // trace gone this rev
+      h += `<line class="wire ghost" x1="${w[0]}" y1="${w[1]}" x2="${w[2]}" y2="${w[3]}"/>`;
+    // one part → its full symbol geometry, tinted by diff role (add/chg/ghost)
+    const compSVG = (p, _pi, cls) => {
+      if (!p.box) return '';
+      let h = `<g class="${cls}" data-des="${esc(p.des)}" data-pi="${_pi}" data-pkg="${esc(p.pkg)}">`;
       if (p.sym !== 'box' && p.pins.length === 2) {
         const a = p.pins[0], b = p.pins[1];
         const gg = symSVG(p.sym, [a[0], a[1]], [b[0], b[1]]);
@@ -528,19 +579,17 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
         }
       }
       h += `</g>`;
-      if (p.sym !== 'box') {
-        for (const pin of p.pins)
-          h += `<circle class="pin" data-net="${esc(pin[2])}" cx="${pin[0]}" cy="${pin[1]}" r="1"/>`;
-      }
+      if (p.sym !== 'box') for (const pin of p.pins)
+        h += `<circle class="pin${cls.indexOf('add') > 0 ? ' add' : ''}" data-net="${esc(pin[2])}" cx="${pin[0]}" cy="${pin[1]}" r="1"/>`;
+      return h;
+    };
+    for (let _pi = 0; _pi < s.parts.length; _pi++) { const p = s.parts[_pi];
+      let cls = 'comp';
+      if (diff) { if (addedSet.has(p.des)) cls += ' add'; else if (chgSet.has(p.des)) cls += ' chg'; }
+      h += compSVG(p, _pi, cls);
     }
-    if (diff) {
-      const ghosts = (dctx.removedGeom && dctx.removedGeom[s.id]) || [];
-      for (const gh of ghosts) {
-        const [bx, by, bw, bh] = gh.box, cx = bx + bw / 2, cy = by + bh / 2;
-        h += `<g class="comp ghost" data-des="${esc(gh.des)}"><rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="2"/>` +
-          `<text x="${cx}" y="${cy}" font-size="11">${esc(gh.des)}</text></g>`;
-      }
-    }
+    if (diff) for (const gh of (dctx.removedGeom && dctx.removedGeom[s.id]) || [])  // removed part, drawn in place, red
+      h += compSVG(gh, -1, 'comp ghost');
     const fc = s.frame ? [(s.frame[0] + s.frame[2]) / 2, (s.frame[1] + s.frame[3]) / 2] : null;
     for (const f of s.connectors || []) h += flagSVG(f, fc);
     for (const j of s.junctions || []) h += `<circle class="junction" cx="${j[0]}" cy="${j[1]}" r="1.6"/>`;
@@ -661,7 +710,9 @@ function sheetLabel(i) { const s = M.sheets[i]; return s.page || s.view; }
 function init() {
   refreshXprobeMaps();
   const diff = M.diff || null;
-  dctx = diff ? { diff, addedSet: new Set(diff.added), chgSet: new Set(Object.keys(diff.changed)), removedGeom: M.removedGeom } : {};
+  dctx = diff ? { diff, addedSet: new Set(diff.added), chgSet: new Set(Object.keys(diff.changed)), removedGeom: M.removedGeom,
+    addedWires: Object.fromEntries(Object.entries(M.addedWires || {}).map(([k, v]) => [k, new Set(v)])),
+    removedWires: M.removedWires || {} } : {};
   netSheets = new Map(); netNames = new Map();
   M.sheets.forEach((s, i) => {
     const add = k => { if (!k) return; if (!netSheets.has(k)) netSheets.set(k, new Set()); netSheets.get(k).add(i); };
@@ -715,6 +766,9 @@ function init() {
     window.__cmtContext = () => 'sch:' + (M.name || '') + ':' + cur;   // shared with the Firebase backend bootstrap
     Comments.init({
       context: window.__cmtContext,
+      rev: () => (window.__docMeta || {}).curRev || 1,          // comments are locked to the rev they were made on
+      latestRev: () => (window.__docMeta || {}).rev || 1,       // unversioned (legacy) comments belong to the latest rev
+      diffRev: () => (window.__docMeta || {}).diffRev || null,  // in a diff, show both revs (new / gone)
       svg: svgEl, stage: $('stage'), button: $('cmt-btn'),
       onChange: () => renderSidebar(),   // refresh per-sheet comment counts
       project: (x, y) => ({ sx: x * view.k + view.x, sy: y * view.k + view.y }),
@@ -736,6 +790,9 @@ function init() {
       }
     });
     window._cmtReady = true; _cmtSheet = cur;
+    // Doc-wide per-sheet comment counts (rev-aware badges in the sheet list).
+    window.__sheetCounts = window.__sheetCounts || {};
+    if (Comments.watchCounts) Comments.watchCounts('sch:' + (M.name || '') + ':', m => { window.__sheetCounts = m || {}; renderSidebar(); });
   }
 }
 
@@ -998,7 +1055,7 @@ function updChrome() {
   $('tb-sub').textContent = `${M.sheets.length} sheets · ${partCount} parts`;
   const s = M.sheets[cur];
   $('tb-crumb').textContent = s ? `${s.view} / ${s.page}` : '';
-  $('tb-theme').textContent = dark ? 'Light' : 'Dark';
+  $('tb-theme').textContent = dark ? 'Light canvas' : 'Dark canvas';
   $('tb-sheets-btn').style.display = sheetsOpen ? 'none' : 'block';
   $('sidebar').style.display = sheetsOpen ? 'block' : 'none';
   const d = dctx.diff;
@@ -1069,7 +1126,13 @@ function renderSidebar() {
         const dots = pinNets.filter(p => (netSheets.get(p.key) || new Set()).has(i))
           .map(p => `<span title="${esc(netName(p.key))}" style="width:6px;height:6px;border-radius:50%;background:${p.color};display:inline-block;flex-shrink:0"></span>`).join('');
         const th = thumbs[i] ? `background-image:url(&quot;${thumbs[i]}&quot;);` : '';
-        const cc = (window.Comments && Comments.countFor) ? Comments.countFor('sch:' + (M.name || '') + ':' + i) : 0;
+        // rev-aware unresolved comment count for this sheet (locked to the rev being
+        // viewed; in a diff, also count the compared rev). Falls back to Comments.countFor
+        // (localStorage) when the doc-wide watcher hasn't populated yet.
+        const _md = window.__docMeta || {}, _rn = _md.curRev, _dv = _md.diffRev, _lt = _md.rev || 1;
+        const _arr = (window.__sheetCounts || {})['sch:' + (M.name || '') + ':' + i];
+        const cc = _arr ? _arr.filter(r => { const e = (r == null ? _lt : r); return e === _rn || (_dv && e === _dv); }).length
+          : ((window.Comments && Comments.countFor) ? Comments.countFor('sch:' + (M.name || '') + ':' + i) : 0);
         const cbadge = cc ? `<span title="${cc} comment${cc > 1 ? 's' : ''}" style="display:inline-flex;align-items:center;gap:2px;font-size:9.5px;font-weight:700;color:#fff;background:#F5A623;border-radius:8px;padding:0 6px;line-height:15px;font-family:'IBM Plex Mono',monospace">&#128172; ${cc}</span>` : '';
         h += `<div class="pgrow${active ? ' active' : ''}" data-i="${i}">` +
           `<div style="width:62px;height:42px;background:#FFFFFF;${th}background-size:contain;background-repeat:no-repeat;background-position:center;border:1px solid ${active ? '#C9A97F' : '#E4E0D3'};border-radius:4px;flex-shrink:0"></div>` +
@@ -1278,6 +1341,9 @@ function toggleTheme() {
 }
 function bindToolbar() {
   $('tb-sheets-btn').addEventListener('click', toggleSheets);
+  const moreMenu = $('tb-more-menu');
+  $('tb-more').addEventListener('click', e => { e.stopPropagation(); moreMenu.style.display = moreMenu.style.display === 'none' ? 'block' : 'none'; });
+  document.addEventListener('click', () => { if (moreMenu) moreMenu.style.display = 'none'; });
   $('tb-theme').addEventListener('click', toggleTheme);
   $('tb-bom').addEventListener('click', () => { bomOpen = true; bomQ = ''; renderBom(); });
   $('tb-fit').addEventListener('click', fit);
@@ -1361,13 +1427,28 @@ function computeModelDiff(oldM, newM, oldLabel) {
     if (got.length) reasons.push('nets added: ' + got.sort().join(', '));
     if (reasons.length) changed[d] = reasons;
   }
-  // ghost geometry for removed parts, keyed by sheet id (matches sceneSVG)
+  // ghost geometry for removed parts — full symbol so it draws in red where it sat
   const rm = new Set(removed), ghosts = {};
   oldM.sheets.forEach(s => {
-    const gs = s.parts.filter(p => rm.has(p.des) && p.box).map(p => ({ des: p.des, box: p.box }));
+    const gs = s.parts.filter(p => rm.has(p.des) && p.box)
+      .map(p => ({ des: p.des, box: p.box, sym: p.sym, pins: p.pins, val: p.val, pkg: p.pkg }));
     if (gs.length) ghosts[s.id] = gs;
   });
-  return { diff: { old: oldLabel, added, removed, changed }, removedGeom: ghosts };
+  // trace diff, per sheet id: added wires (green) and removed wires (red)
+  const wkey = w => { let a = [Math.round(w[0]), Math.round(w[1])], b = [Math.round(w[2]), Math.round(w[3])];
+    if (a[0] > b[0] || (a[0] === b[0] && a[1] > b[1])) { const t = a; a = b; b = t; }
+    return a[0] + ',' + a[1] + ',' + b[0] + ',' + b[1]; };
+  const oldBy = {}, newBy = {};
+  oldM.sheets.forEach(s => oldBy[s.id] = s);
+  newM.sheets.forEach(s => newBy[s.id] = s);
+  const addedWires = {}, removedWires = {};
+  newM.sheets.forEach(s => { const os = new Set(((oldBy[s.id] || {}).wires || []).map(wkey));
+    const a = (s.wires || []).filter(w => !os.has(wkey(w))).map(wkey);
+    if (a.length) addedWires[s.id] = a; });
+  oldM.sheets.forEach(s => { const ns = new Set(((newBy[s.id] || {}).wires || []).map(wkey));
+    const r = (s.wires || []).filter(w => !ns.has(wkey(w)));
+    if (r.length) removedWires[s.id] = r; });
+  return { diff: { old: oldLabel, added, removed, changed }, removedGeom: ghosts, addedWires, removedWires };
 }
 
 // Revision selector (shell mode): switch revs, open a diff against an older rev.
@@ -1396,7 +1477,7 @@ window.__renderModel = function (model, xprobe, oldModel) {
   if (oldModel) {
     const meta = window.__docMeta || {};
     const r = computeModelDiff(oldModel, M, 'rev ' + (meta.diffRev || '?'));
-    M.diff = r.diff; M.removedGeom = r.removedGeom;
+    M.diff = r.diff; M.removedGeom = r.removedGeom; M.addedWires = r.addedWires; M.removedWires = r.removedWires;
   }
   init();
   renderRevUI();
