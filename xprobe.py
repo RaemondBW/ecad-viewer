@@ -114,8 +114,7 @@ def _layout_nets(brd_path, model):
 
 
 # ------------------------------------------------------------- schematic side
-def _schematic_nets(dsn_path):
-    m = ov.build_model(str(dsn_path))
+def _schematic_nets_from_model(m):
     nets = {}   # net_id -> {name, refdes:set, pins:set}
     for sh in m["sheets"]:
         names = sh.get("nets", {})
@@ -129,14 +128,27 @@ def _schematic_nets(dsn_path):
     return nets
 
 
+def _schematic_nets(dsn_path):
+    return _schematic_nets_from_model(ov.build_model(str(dsn_path)))
+
+
+def build_from_models(sch_model, lay_model):
+    """Cross-probe correspondence from pre-built schematic + layout models
+    (parser-agnostic; used for KiCad and any non-OrCAD source). Same matching as
+    build_correspondence: exact net-name, then refdes-set Jaccard for the rest."""
+    return _match(_schematic_nets_from_model(sch_model), _layout_nets(None, lay_model))
+
+
 def build_correspondence(dsn_path, brd_path, brd_model):
     """Assign each layout geometric net (a fragment — a net splits at pad
     junctions since we don't bridge through pads) to its single best schematic
     net: exact name if it has one, else the schematic net with the highest
     refdes-set Jaccard (>=0.6). Then group fragments by schematic net so one
     schematic net maps to all its layout pieces."""
-    lay = _layout_nets(brd_path, brd_model)
-    sch = _schematic_nets(dsn_path)
+    return _match(_schematic_nets(dsn_path), _layout_nets(brd_path, brd_model))
+
+
+def _match(sch, lay):
     sch_by_name = {}
     for nid, sn in sch.items():
         if sn["name"]:

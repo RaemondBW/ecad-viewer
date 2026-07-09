@@ -130,14 +130,16 @@ def _attach_diff(model, old_design, new_design, old_name):
     model["removedWires"] = removed_wires
 
 
-def generate(dsn_path, out_path, diff_path=None, xprobe=None, shell=False):
+def generate(dsn_path, out_path, diff_path=None, xprobe=None, shell=False, model=None):
     # shell=True emits a data-free viewer that fetches the model after sign-in (hosted,
     # private). shell=False bakes the model in via /*__BOOT__*/ (standalone file).
+    # `model` lets callers pass a pre-built model (e.g. from a non-OrCAD parser).
     if shell:
         boot, fb = "", comment_ui.shell_bootstrap("schematic-viewer", "schematic")
         model = None
     else:
-        model = build_model(dsn_path, diff_path)
+        if model is None:
+            model = build_model(dsn_path, diff_path)
         boot = "window.__renderModel(" + json.dumps(model) + ", " + json.dumps(xprobe) + ");"
         fb = comment_ui.firebase_bootstrap("schematic-viewer")
     html = (HTML_TEMPLATE.replace("/*__BOOT__*/", boot)
