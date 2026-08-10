@@ -199,19 +199,23 @@ def build(brd_path, bom_path=None):
             "types": {k: {"label": v[0], "color": v[1], "hs": v[2]} for k, v in TYPES.items()}}
 
 
-def generate(brd_path, out_path, bom_path=None, xprobe=None, model=None, shell=False):
+def generate(brd_path, out_path, bom_path=None, xprobe=None, model=None, shell=False, offline=False):
     # shell=True: data-free viewer that fetches the board after sign-in (hosted, private).
+    # offline=True (embedded only): drop the Firebase/comments bootstrap + web-font links
+    # so the file makes no network request — pure self-contained viewer + cross-probe.
     if shell:
         boot, fb = "", comment_ui.shell_bootstrap("schematic-viewer", "layout")
     else:
         if model is None:
             model = build(brd_path, bom_path)
         boot = "window.__renderModel(" + json.dumps(model) + ", " + json.dumps(xprobe) + ");"
-        fb = comment_ui.firebase_bootstrap("schematic-viewer")
+        fb = "" if offline else comment_ui.firebase_bootstrap("schematic-viewer")
     html = (HTML.replace("/*__BOOT__*/", boot)
                 .replace("/*__CMT_CSS__*/", comment_ui.CSS)
                 .replace("/*__CMT_JS__*/", comment_ui.JS)
                 .replace("<!--__CMT_FIREBASE__-->", fb))
+    if offline:
+        html = comment_ui.strip_webfonts(html)
     Path(out_path).write_text(html)
     if shell:
         print(f"Wrote {out_path}  (layout shell, {Path(out_path).stat().st_size // 1024} KB)")
@@ -520,7 +524,9 @@ function netNameOf(xi,root){ if(xi!=null&&XP&&XP.xnets[xi]) return XP.xnets[xi].
 // Cross-probe: carry the highlighted nets to the schematic as ?xnet=i,j,k.
 function schematicHref(){ const u=new URLSearchParams(location.search); u.delete('ref');
   if(pinnedXnets.length) u.set('xnet',pinnedXnets.join(',')); else u.delete('xnet');
-  return '../?'+u.toString(); }
+  // standalone pair → jump straight to the sibling file; hosted → the dashboard.
+  const base=(XP&&XP.standalone&&XP.companion)?XP.companion:'../';
+  return base+'?'+u.toString(); }
 function activeNet(){ return pinnedNet||hoverNet; }
 function inNet(net,r){ return net && r!=null && net.has(r); }
 function padInNet(net,pn){ if(!net||!pn) return false; for(const r of pn) if(net.has(r)) return true; return false; }
@@ -701,7 +707,8 @@ svg.addEventListener('pointerup',e=>{
 svg.addEventListener('wheel',e=>{ if(MODALMODE)return; e.preventDefault(); const r=svg.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;
   const f=Math.exp(-e.deltaY*0.0015),nk=view.k*f; view.x=mx-(mx-view.x)*(nk/view.k); view.y=my-(my-view.y)*(nk/view.k); view.k=nk; applyView(); },{passive:false});
 document.getElementById('fit').onclick=fit;
-document.getElementById('to-sch').onclick=()=>location.href=schematicHref();
+if(XP&&XP.companion) document.getElementById('to-sch').onclick=()=>location.href=schematicHref();
+else document.getElementById('to-sch').style.display='none';
 document.getElementById('flip').onclick=e=>{ flipped=!flipped; e.currentTarget.style.background=flipped?'#EFE9DB':''; render(); if(window.Comments&&Comments.reproject) Comments.reproject(); };
 document.getElementById('zi').onclick=()=>zoomBy(1.3);
 document.getElementById('zo').onclick=()=>zoomBy(0.77);
@@ -816,6 +823,8 @@ def main():
     ap.add_argument("-o", "--output", type=Path, default=None)
     ap.add_argument("--bom", type=Path, default=None,
                     help="OrCAD BOM export for values (default: sibling <stem>.BOM)")
+    ap.add_argument("--offline", action="store_true",
+                    help="fully self-contained file: no web fonts, no comments backend")
     args = ap.parse_args()
     out = args.output or args.brd.parent / (args.brd.stem + "_pcb.html")
     bom = args.bom
@@ -824,7 +833,7 @@ def main():
             if c.exists():
                 bom = c
                 break
-    generate(args.brd, out, bom)
+    generate(args.brd, out, bom, offline=args.offline)
 
 
 if __name__ == "__main__":

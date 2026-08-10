@@ -192,10 +192,11 @@ def _match(sch, lay):
 
 
 def generate_linked(dsn_path, brd_path, out_dir, bom_path=None,
-                    sch_name="orcad_schematic.html", pcb_name="pcb.html"):
+                    sch_name="orcad_schematic.html", pcb_name="pcb.html", offline=False):
     """Generate both viewers wired for cross-probing. The layout model is built
     once and shared with the correspondence so the embedded xnet coordinates
-    match the rendered geometry exactly."""
+    match the rendered geometry exactly. offline=True makes both files fully
+    self-contained (no network / backend); see generate(offline=…)."""
     import brd_viewer, orcad_viewer
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -204,10 +205,14 @@ def generate_linked(dsn_path, brd_path, out_dir, bom_path=None,
     payload = [{"name": x["name"], "sch": x["sch"], "reps": x["reps"], "bbox": x["bbox"]}
                for x in xnets]
     lay_refs = sorted({pt["ref"] for pt in model["parts"]})
+    # standalone=True: the two files are siblings navigated by filename (not the
+    # hosted dashboard), so the top Schematic/Layout button targets the companion file.
     brd_viewer.generate(brd_path, out / pcb_name, bom_path,
-                        xprobe={"xnets": payload, "companion": sch_name}, model=model)
+                        xprobe={"xnets": payload, "companion": sch_name, "standalone": True},
+                        model=model, offline=offline)
     orcad_viewer.generate(dsn_path, out / sch_name,
-                          xprobe={"xnets": payload, "companion": pcb_name, "layoutRefs": lay_refs})
+                          xprobe={"xnets": payload, "companion": pcb_name, "layoutRefs": lay_refs,
+                                  "standalone": True}, offline=offline)
     ex = sum(1 for x in xnets if x["exact"])
     print(f"linked {len(payload)} nets ({ex} exact-name, {len(payload) - ex} fuzzy) "
           f"of {ns} schematic / {nl} layout nets")
@@ -217,8 +222,10 @@ def generate_linked(dsn_path, brd_path, out_dir, bom_path=None,
 if __name__ == "__main__":
     import sys
     a = sys.argv[1:]
-    if a and a[0] == "--build":       # --build DSN BRD OUTDIR [BOM]
-        generate_linked(a[1], a[2], a[3], a[4] if len(a) > 4 else None)
+    offline = "--offline" in a
+    a = [x for x in a if x != "--offline"]
+    if a and a[0] == "--build":       # --build [--offline] DSN BRD OUTDIR [BOM]
+        generate_linked(a[1], a[2], a[3], a[4] if len(a) > 4 else None, offline=offline)
     else:                              # DSN BRD [BOM]  → just report match quality
         import brd_viewer
         model = brd_viewer.build(a[1], a[2] if len(a) > 2 else None)

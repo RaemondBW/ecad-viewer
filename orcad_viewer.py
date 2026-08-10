@@ -130,10 +130,13 @@ def _attach_diff(model, old_design, new_design, old_name):
     model["removedWires"] = removed_wires
 
 
-def generate(dsn_path, out_path, diff_path=None, xprobe=None, shell=False, model=None):
+def generate(dsn_path, out_path, diff_path=None, xprobe=None, shell=False, model=None, offline=False):
     # shell=True emits a data-free viewer that fetches the model after sign-in (hosted,
     # private). shell=False bakes the model in via /*__BOOT__*/ (standalone file).
     # `model` lets callers pass a pre-built model (e.g. from a non-OrCAD parser).
+    # offline=True (embedded only): drop the Firebase/comments backend bootstrap and
+    # the web-font links so the file references NOTHING on the network — pure, fully
+    # self-contained viewer + cross-probe. (Comments/sign-in are omitted.)
     if shell:
         boot, fb = "", comment_ui.shell_bootstrap("schematic-viewer", "schematic")
         model = None
@@ -141,11 +144,13 @@ def generate(dsn_path, out_path, diff_path=None, xprobe=None, shell=False, model
         if model is None:
             model = build_model(dsn_path, diff_path)
         boot = "window.__renderModel(" + json.dumps(model) + ", " + json.dumps(xprobe) + ");"
-        fb = comment_ui.firebase_bootstrap("schematic-viewer")
+        fb = "" if offline else comment_ui.firebase_bootstrap("schematic-viewer")
     html = (HTML_TEMPLATE.replace("/*__BOOT__*/", boot)
                          .replace("/*__CMT_CSS__*/", comment_ui.CSS)
                          .replace("/*__CMT_JS__*/", comment_ui.JS)
                          .replace("<!--__CMT_FIREBASE__-->", fb))
+    if offline:
+        html = comment_ui.strip_webfonts(html)
     Path(out_path).write_text(html)
     if shell:
         print(f"Wrote {out_path}  (schematic shell, {Path(out_path).stat().st_size // 1024} KB)")
@@ -1054,7 +1059,9 @@ function layoutHref() {
   pinNets.forEach(p => add(p.key, p.color));                 // carry each pinned net + its colour
   if (selNet != null && !isPinned(selNet)) add(selNet, PALETTE[0]);
   if (xs.length) { u.set('xnet', xs.join(',')); u.set('xcolor', xc.join(',')); } else { u.delete('xnet'); u.delete('xcolor'); }
-  return 'layout/?' + u.toString();
+  // standalone pair → jump straight to the sibling file; hosted → the layout/ route.
+  const base = (XP && XP.standalone && XP.companion) ? XP.companion : 'layout/';
+  return base + '?' + u.toString();
 }
 function centerNet(k) {   // fit the view around a net's wires/pins on the current sheet
   const els = [...sceneEl.querySelectorAll('[data-net]')].filter(el => el.dataset.net === k);
@@ -1372,7 +1379,7 @@ function toggleTheme() {
 }
 function bindToolbar() {
   $('tb-sheets-btn').addEventListener('click', toggleSheets);
-  $('to-lay').addEventListener('click', () => location.href = layoutHref());
+  $('to-lay').addEventListener('click', () => location.href = layoutHref());  // visibility toggled in __renderModel
   const moreMenu = $('tb-more-menu');
   $('tb-more').addEventListener('click', e => { e.stopPropagation(); moreMenu.style.display = moreMenu.style.display === 'none' ? 'block' : 'none'; });
   document.addEventListener('click', () => { if (moreMenu) moreMenu.style.display = 'none'; });
@@ -1506,6 +1513,7 @@ function renderRevUI() {
 // mode a third argument carries an OLDER revision's model to diff against.
 window.__renderModel = function (model, xprobe, oldModel) {
   M = model; XP = xprobe || null;
+  { const tl = document.getElementById('to-lay'); if (tl) tl.style.display = (XP && XP.companion) ? '' : 'none'; }
   if (oldModel) {
     const meta = window.__docMeta || {};
     const r = computeModelDiff(oldModel, M, 'rev ' + (meta.diffRev || '?'));
@@ -1527,9 +1535,11 @@ def main():
     ap.add_argument("-o", "--output", type=Path, default=None)
     ap.add_argument("--diff", type=Path, default=None,
                     help="an older .DSN to diff against")
+    ap.add_argument("--offline", action="store_true",
+                    help="fully self-contained file: no web fonts, no comments backend")
     args = ap.parse_args()
     out = args.output or args.dsn.parent / (args.dsn.stem + "_schematic.html")
-    generate(args.dsn, out, args.diff)
+    generate(args.dsn, out, args.diff, offline=args.offline)
 
 
 if __name__ == "__main__":

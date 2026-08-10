@@ -53,6 +53,12 @@ JS = (_demodulify_iife("comments.js", "createComments") + "\n"
 CSS = ""   # styles are auto-injected by the libraries at init(); see comments/*.css
 
 
+def strip_webfonts(html):
+    """Remove the Google-Fonts <link> tags so an offline build makes no network
+    request at all (the viewer falls back to system mono/sans fonts)."""
+    return re.sub(r"[ \t]*<link[^>]*fonts\.(?:googleapis|gstatic)\.com[^>]*>\n?", "", html)
+
+
 # ── Firebase platform backend (optional) ─────────────────────────────────────
 # When BACKEND is set, generate() splices a <script type="module"> that loads the
 # Firebase SDK from the gstatic CDN, builds { store, identity, permissions } from
