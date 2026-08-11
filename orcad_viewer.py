@@ -576,12 +576,17 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
         }
       } else {
         const [bx, by, bw, bh] = p.box, cx = bx + bw / 2, cy = by + bh / 2;
-        const named = p.pins.some(pin => pin[4]);
+        // Inside each box, label the pin with its NAME when the symbol has one, else
+        // fall back to its NUMBER — so connectors / parts without pin names (a PCI
+        // header, an unnamed IC) still show pin labels instead of a bare box.
+        const pinLabel = pin => pin[4] || pin[3] || '';
+        const hasInside = p.pins.some(pin => pinLabel(pin));
         const fs = Math.max(8, Math.min(13, Math.min(bw, bh) * 0.35));
         h += `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="2"/>`;
-        h += `<text x="${cx}" y="${named ? by + 9 : cy}" font-size="${fs}">${esc(p.des)}</text>`;
+        h += `<text x="${cx}" y="${hasInside ? by + 9 : cy}" font-size="${fs}">${esc(p.des)}</text>`;
         for (const pin of p.pins) {
-          if (!pin[4]) continue;
+          const lab = pinLabel(pin);
+          if (!lab) continue;
           const px = pin[0], py = pin[1];
           const dL = Math.abs(px - bx), dR = Math.abs(px - (bx + bw)), dT = Math.abs(py - by), dB = Math.abs(py - (by + bh));
           const mn = Math.min(dL, dR, dT, dB);
@@ -590,7 +595,7 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
           else if (mn === dR) { tx = px - 3; anchor = 'end'; }
           else if (mn === dT) { ty = py + 7; }
           else { ty = py - 3; }
-          h += `<text class="pinname" x="${tx}" y="${ty}" font-size="7" text-anchor="${anchor}" dominant-baseline="central">${esc(pin[4])}</text>`;
+          h += `<text class="pinname" x="${tx}" y="${ty}" font-size="8" text-anchor="${anchor}" dominant-baseline="central">${esc(lab)}</text>`;
         }
       }
       h += `</g>`;
@@ -614,14 +619,22 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
     h += titleblockSVG(s.tb, model.titleblock);
     return h;
   }
-  function fitBox(s) {
-    if (s.frame) return s.frame;
+  // The content extent (parts + wires + net labels) as a robust percentile box, so a
+  // stray far-off part doesn't blow it up. This is what the MAIN view fits to — fitting
+  // the whole page frame instead makes a large/misread sheet's content tiny on screen.
+  function contentBox(s) {
     const xs = [], ys = [];
     for (const w of s.wires) { xs.push(w[0], w[2]); ys.push(w[1], w[3]); }
     for (const p of s.parts) { if (p.box) { xs.push(p.box[0], p.box[0] + p.box[2]); ys.push(p.box[1], p.box[1] + p.box[3]); } }
-    if (!xs.length) return s.bbox;
+    for (const l of (s.labels || [])) { xs.push(l.x); ys.push(l.y); }
+    if (!xs.length) return s.frame || s.bbox;
     const pct = (a, q) => { a = a.slice().sort((u, v) => u - v); return a[Math.floor((a.length - 1) * q)]; };
-    return [pct(xs, 0.01), pct(ys, 0.01), pct(xs, 0.99), pct(ys, 0.99)];
+    return [pct(xs, 0.005), pct(ys, 0.005), pct(xs, 0.995), pct(ys, 0.995)];
+  }
+  // fitBox keeps the page frame (used by thumbnails / minimap, which show the whole sheet).
+  function fitBox(s) {
+    if (s.frame) return s.frame;
+    return contentBox(s);
   }
   function miniInner(s) {
     const b = fitBox(s);
@@ -639,7 +652,7 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}">${h}</svg>`;
     return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
   }
-  window.SchRender = { esc, isBus, borderSVG, titleblockSVG, flagSVG, symSVG, sceneSVG, fitBox, miniInner, thumbDataURI };
+  window.SchRender = { esc, isBus, borderSVG, titleblockSVG, flagSVG, symSVG, sceneSVG, fitBox, contentBox, miniInner, thumbDataURI };
 })();
 
 /* ── App ── */
@@ -866,7 +879,7 @@ function applyView() {
 }
 function fit() {
   if (!svgEl || !ready) return;
-  const s = M.sheets[cur], b = R.fitBox(s), r = svgEl.getBoundingClientRect();
+  const s = M.sheets[cur], b = R.contentBox(s), r = svgEl.getBoundingClientRect();
   if (!r.width || !r.height) return;
   const w = Math.max(b[2] - b[0], 10), h = Math.max(b[3] - b[1], 10);
   const pad = 46, k = Math.min((r.width - 2 * pad) / w, (r.height - 2 * pad) / h);
