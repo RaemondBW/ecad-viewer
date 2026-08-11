@@ -48,6 +48,11 @@ def _layout_nets(brd_path, model):
     V = model["vias"]
     names = model.get("netNames", [""])
     layers = model["layers"]
+    # No copper layers means the layout couldn't be parsed into geometry (an
+    # unsupported/newer .brd version, or a board with no routed copper). Don't crash
+    # — return no correspondence so the viewers still generate, just without links.
+    if not layers:
+        return []
     L0 = layers[0]
     # union trace endpoints (same layer) + the segment's exact net id
     for i in range(0, len(C), 7):
@@ -201,6 +206,12 @@ def generate_linked(dsn_path, brd_path, out_dir, bom_path=None,
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     model = brd_viewer.build(brd_path, bom_path)
+    # Diagnostic: a layout that parsed with no copper (unsupported/newer .brd
+    # version) still produces both viewers, just without cross-probe links.
+    if not model.get("layers"):
+        print(f"  ! layout '{Path(brd_path).name}' parsed with no copper layers "
+              f"({len(model.get('parts', []))} parts placed) — the .brd format may be "
+              f"only partially supported; generating viewers WITHOUT cross-probe")
     xnets, ns, nl = build_correspondence(dsn_path, brd_path, model)
     payload = [{"name": x["name"], "sch": x["sch"], "reps": x["reps"], "bbox": x["bbox"]}
                for x in xnets]
