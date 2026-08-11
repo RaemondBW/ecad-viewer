@@ -95,6 +95,7 @@ def _drop_outlier_pads(pads):
 
 def build(brd_path, bom_path=None):
     d = Path(brd_path).read_bytes()
+    hdr = bc.parse_header(d)              # magic + version string, for format diagnostics
     strings = bc.parse_strings(d)
     placements = bc.component_placements(d, strings)
     bom = oc.parse_bom(bom_path) if bom_path and Path(bom_path).exists() else {}
@@ -189,6 +190,7 @@ def build(brd_path, bom_path=None):
 
     layers = sorted({s[4] for s in copper})
     return {"name": Path(brd_path).stem, "parts": parts, "extent": ext,
+            "fmt": {"magic": hdr.get("magic", 0), "version": hdr.get("version_string", "")},
             "copper": [c for s in copper for c in s],      # x1,y1,x2,y2,layer,width,net × n
             "vias": vias_flat,                             # x,y,half,net × n
             "pours": pours,                                # [{n,l,p:[x,y…]}]

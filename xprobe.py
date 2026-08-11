@@ -209,9 +209,14 @@ def generate_linked(dsn_path, brd_path, out_dir, bom_path=None,
     # Diagnostic: a layout that parsed with no copper (unsupported/newer .brd
     # version) still produces both viewers, just without cross-probe links.
     if not model.get("layers"):
+        fmt = model.get("fmt", {})
         print(f"  ! layout '{Path(brd_path).name}' parsed with no copper layers "
-              f"({len(model.get('parts', []))} parts placed) — the .brd format may be "
-              f"only partially supported; generating viewers WITHOUT cross-probe")
+              f"({len(model.get('parts', []))} parts placed).")
+        print(f"    .brd format: magic=0x{fmt.get('magic', 0):08x} "
+              f"version={fmt.get('version', '')!r}")
+        print(f"    the copper parser targets Allegro 16.x (magic 0x00160100, 'allv16'); "
+              f"a newer format (17.x) uses different block layouts and isn't parsed yet. "
+              f"Generating viewers WITHOUT cross-probe.")
     xnets, ns, nl = build_correspondence(dsn_path, brd_path, model)
     payload = [{"name": x["name"], "sch": x["sch"], "reps": x["reps"], "bbox": x["bbox"]}
                for x in xnets]
