@@ -470,28 +470,35 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
     return g + `</g>`;
   }
   function symSVG(type, a, b) {
-    const dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy) || 1;
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    // Degenerate (coincident/duplicated) leads would collapse the glyph to a point —
+    // assume a standard span so a passive is never invisible.
+    const L = Math.hypot(dx, dy) || 40;
     const ux = dx / L, uy = dy / L, vx = -uy, vy = ux;
     const cx = (a[0] + b[0]) / 2, cy = (a[1] + b[1]) / 2;
-    const bl = Math.min(L * 0.32, 11), w = 5.5;
+    // Body scales with the pin span (as an IC scales with its box) so a passive is
+    // never a speck between long leads; floored so a tight part still reads. `sc`
+    // scales the originally 11-mil-tuned glyph widths with it; `fs` sizes the label.
+    const bl = Math.max(9, Math.min(L * 0.34, 40)), sc = Math.max(1, Math.min(bl / 11, 2.4));
+    const w = 5.5 * sc, fs = Math.max(12, Math.min(bl * 0.6, 22));
     const P = (t, s) => [cx + ux * t + vx * s, cy + uy * t + vy * s];
     const M = (p) => p[0].toFixed(1) + ' ' + p[1].toFixed(1);
     const line = (p, q, c = 'sym') => `<line class="${c}" x1="${p[0].toFixed(1)}" y1="${p[1].toFixed(1)}" x2="${q[0].toFixed(1)}" y2="${q[1].toFixed(1)}"/>`;
     let svg = '', gap = bl;
     if (type === 'res') {
-      const e1 = P(-bl, 0), e2 = P(bl, 0), rw = 4.5;
+      const e1 = P(-bl, 0), e2 = P(bl, 0), rw = 4.5 * sc;
       const c = [P(-bl, rw), P(bl, rw), P(bl, -rw), P(-bl, -rw)];
       svg += `<polygon class="sym" points="${c.map(M).join(' ')}"/>`;
       svg += line(a, e1, 'lead') + line(b, e2, 'lead');
     } else if (type === 'cap' || type === 'cape') {
-      gap = 3.2; const pw = 7;
+      gap = 3.2 * sc; const pw = 7 * sc;
       const e1 = P(-gap, 0), e2 = P(gap, 0);
       svg += line(P(-gap, -pw), P(-gap, pw));
       if (type === 'cape') {
-        const c1 = P(gap, -pw), c2 = P(gap, pw), cc = P(gap + 3, 0);
+        const c1 = P(gap, -pw), c2 = P(gap, pw), cc = P(gap + 3 * sc, 0);
         svg += `<path class="sym" d="M ${M(c1)} Q ${M(cc)} ${M(c2)}"/>`;
-        const pp = P(-gap - 4, -pw - 2);
-        svg += `<text class="sym fill" x="${pp[0].toFixed(1)}" y="${pp[1].toFixed(1)}" font-size="6" stroke="none" text-anchor="middle" dominant-baseline="central">+</text>`;
+        const pp = P(-gap - 4 * sc, -pw - 2 * sc);
+        svg += `<text class="sym fill" x="${pp[0].toFixed(1)}" y="${pp[1].toFixed(1)}" font-size="${(6 * sc).toFixed(1)}" stroke="none" text-anchor="middle" dominant-baseline="central">+</text>`;
       } else {
         svg += line(P(gap, -pw), P(gap, pw));
       }
@@ -510,8 +517,8 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
       svg += line(a, e1, 'lead') + line(b, e2, 'lead');
     }
     svg += `<rect class="hit" x="${(cx - Math.abs(ux) * bl - Math.abs(vx) * w - 2).toFixed(1)}" y="${(cy - Math.abs(uy) * bl - Math.abs(vy) * w - 2).toFixed(1)}" width="${(2 * (Math.abs(ux) * bl + Math.abs(vx) * w + 2)).toFixed(1)}" height="${(2 * (Math.abs(uy) * bl + Math.abs(vy) * w + 2)).toFixed(1)}"/>`;
-    const off = w + 7, lx = cx + vx * off, ly = cy + vy * off;
-    return { svg, lx, ly };
+    const off = w + 7 * sc, lx = cx + vx * off, ly = cy + vy * off;
+    return { svg, lx, ly, fs };
   }
   function sceneSVG(s, model, dctx) {
     dctx = dctx || {};
@@ -560,11 +567,12 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
         const a = p.pins[0], b = p.pins[1];
         const gg = symSVG(p.sym, [a[0], a[1]], [b[0], b[1]]);
         h += gg.svg;
+        const lfs = gg.fs, ls = lfs * 0.62;   // label font + half the line spacing
         if (p.val) {   // designator + value stacked beside the symbol
-          h += `<text class="lbl" x="${gg.lx}" y="${gg.ly - 5}" font-size="9" text-anchor="middle" dominant-baseline="central">${esc(p.des)}</text>` +
-               `<text class="val" x="${gg.lx}" y="${gg.ly + 5}" font-size="9" text-anchor="middle" dominant-baseline="central">${esc(p.val)}</text>`;
+          h += `<text class="lbl" x="${gg.lx}" y="${(gg.ly - ls).toFixed(1)}" font-size="${lfs.toFixed(1)}" text-anchor="middle" dominant-baseline="central">${esc(p.des)}</text>` +
+               `<text class="val" x="${gg.lx}" y="${(gg.ly + ls).toFixed(1)}" font-size="${lfs.toFixed(1)}" text-anchor="middle" dominant-baseline="central">${esc(p.val)}</text>`;
         } else {
-          h += `<text class="lbl" x="${gg.lx}" y="${gg.ly}" font-size="10" text-anchor="middle" dominant-baseline="central">${esc(p.des)}</text>`;
+          h += `<text class="lbl" x="${gg.lx}" y="${gg.ly}" font-size="${lfs.toFixed(1)}" text-anchor="middle" dominant-baseline="central">${esc(p.des)}</text>`;
         }
       } else {
         const [bx, by, bw, bh] = p.box, cx = bx + bw / 2, cy = by + bh / 2;
@@ -638,6 +646,25 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
 let M = null;              // in shell mode the model is fetched from the backend after
 let XP = null;             // sign-in; in embedded mode /*__BOOT__*/ calls __renderModel now
 const DOCID = new URLSearchParams(location.search).get('doc') || '';
+// ---- debug logging -----------------------------------------------------------
+// Tagged, timestamped console output so a user hitting a failure can copy the
+// console and send it back. Everything is prefixed [CanvasPCB/schematic]; global
+// handlers catch anything the try/catch misses.
+const DBG = (function () {
+  const TAG = '[CanvasPCB/schematic]';
+  const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  const t0 = now();
+  const ms = () => Math.round(now() - t0) + 'ms';
+  const wrap = fn => (...a) => { try { fn(TAG, ms(), ...a); } catch (e) {} };
+  return { TAG, ms, log: wrap(console.log.bind(console)), warn: wrap(console.warn.bind(console)),
+           error: wrap(console.error.bind(console)) };
+})();
+window.addEventListener('error', e => DBG.error('uncaught error:', e.message,
+  '@', (e.filename || '') + ':' + (e.lineno || '') + ':' + (e.colno || ''),
+  (e.error && e.error.stack) || ''));
+window.addEventListener('unhandledrejection', e => DBG.error('unhandled rejection:',
+  (e.reason && (e.reason.stack || e.reason.message)) || e.reason));
+DBG.log('viewer script loaded; doc=' + (DOCID || '(embedded)') + ' url=' + location.href);
 // Layout URL preserving doc/rev/diff, so cross-probe "Open full" stays on the same
 // revision in the same tab.
 function companionHref(extra){ const u = new URLSearchParams(location.search); ['ref','xnet','xcolor','modal'].forEach(k=>u.delete(k)); for(const k in (extra||{})) u.set(k, extra[k]); return XP.companion + '?' + u.toString(); }
@@ -1512,15 +1539,33 @@ function renderRevUI() {
 // shell calls it from the auth+fetch controller once the model is loaded. In shell
 // mode a third argument carries an OLDER revision's model to diff against.
 window.__renderModel = function (model, xprobe, oldModel) {
+ try {
   M = model; XP = xprobe || null;
+  DBG.log('renderModel: model stats =', {
+    name: M && M.name, sheets: M && M.sheets && M.sheets.length,
+    parts: M && M.sheets ? M.sheets.reduce((n, s) => n + (s.parts ? s.parts.length : 0), 0) : 0,
+    wires: M && M.sheets ? M.sheets.reduce((n, s) => n + (s.wires ? s.wires.length : 0), 0) : 0,
+    xprobe: !!XP, companion: !!(XP && XP.companion), standalone: !!(XP && XP.standalone),
+    hasOldModel: !!oldModel });
   { const tl = document.getElementById('to-lay'); if (tl) tl.style.display = (XP && XP.companion) ? '' : 'none'; }
   if (oldModel) {
     const meta = window.__docMeta || {};
     const r = computeModelDiff(oldModel, M, 'rev ' + (meta.diffRev || '?'));
     M.diff = r.diff; M.removedGeom = r.removedGeom; M.addedWires = r.addedWires; M.removedWires = r.removedWires;
   }
+  DBG.log('renderModel: init() start (build sheets + render scene)…');
   init();
   renderRevUI();
+  DBG.log('renderModel: completed OK', {sheet: (typeof cur !== 'undefined' ? cur : null)});
+ } catch (err) {
+  DBG.error('renderModel FAILED:', (err && (err.stack || err.message)) || err);
+  try { document.body.insertAdjacentHTML('beforeend',
+    '<div style="position:fixed;left:12px;bottom:12px;max-width:64ch;padding:11px 13px;'
+    +'background:#7f1d1d;color:#fff;font:12px/1.45 ui-monospace,Menlo,monospace;border-radius:9px;z-index:99999">'
+    +'⚠ Schematic viewer hit an error. Open the browser console (⌥⌘J / Ctrl+Shift+J), copy the '
+    +'<b>[CanvasPCB/schematic]</b> lines, and send them.</div>'); } catch(_){}
+  throw err;
+ }
 };
 /*__BOOT__*/
 </script>

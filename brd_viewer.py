@@ -318,11 +318,41 @@ body.modal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom/
 <script>
 /*__CMT_JS__*/
 const DOCID = new URLSearchParams(location.search).get('doc') || '';
+// ---- debug logging -----------------------------------------------------------
+// Tagged, timestamped console output so a user hitting a failure (a board that
+// won't open, a freeze, a render error) can copy the console and send it back.
+// Everything is prefixed [CanvasPCB/layout]; global handlers catch anything the
+// try/catches miss. Silent by default beyond a startup banner + stage timings.
+const DBG = (function () {
+  const TAG = '[CanvasPCB/layout]';
+  const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  const t0 = now();
+  const ms = () => Math.round(now() - t0) + 'ms';
+  const wrap = fn => (...a) => { try { fn(TAG, ms(), ...a); } catch (e) {} };
+  return { TAG, ms, log: wrap(console.log.bind(console)), warn: wrap(console.warn.bind(console)),
+           error: wrap(console.error.bind(console)) };
+})();
+window.addEventListener('error', e => DBG.error('uncaught error:', e.message,
+  '@', (e.filename || '') + ':' + (e.lineno || '') + ':' + (e.colno || ''),
+  (e.error && e.error.stack) || ''));
+window.addEventListener('unhandledrejection', e => DBG.error('unhandled rejection:',
+  (e.reason && (e.reason.stack || e.reason.message)) || e.reason));
+DBG.log('viewer script loaded; doc=' + (DOCID || '(embedded)') + ' url=' + location.href);
 // The whole viewer runs from __renderModel: embedded builds call it immediately
 // (see /*__BOOT__*/); the hosted shell calls it after sign-in + fetch. The comment
 // library above stays synchronous so the backend can attach to window.Comments.
 window.__renderModel = function (model, xprobe, oldModel) {
+try {
 const M = model, XP = xprobe || null;   // XP: {xnets, companion, ...} or null
+DBG.log('renderModel: model stats =', {
+  name: M && M.name, parts: M && M.parts && M.parts.length,
+  copperSegs: M && M.copper ? (M.copper.length / 7 | 0) : 0,
+  vias: M && M.vias ? (M.vias.length / 4 | 0) : 0,
+  pours: M && M.pours ? M.pours.length : 0,
+  outlinePts: M && M.outline ? (M.outline.length / 2 | 0) : 0,
+  netNames: M && M.netNames ? M.netNames.length : 0,
+  layers: M && M.layers, xprobe: !!XP, standalone: !!(XP && XP.standalone),
+  hasOldModel: !!oldModel });
 // revision diff (shell mode): compare part placement + counts against an older rev
 const DIFF = (function(){
   if(!oldModel) return null;
@@ -378,9 +408,14 @@ function copperPaths(){
     `<path class="cu" d="${g.d.join('')}" stroke="${M.layerColors[g.lay]}" stroke-width="${Math.max(g.w,minW)}"/>`).join('');
 }
 function viasSVG(){
-  const v=M.vias||[]; let h='';
-  for(let i=0;i<v.length;i+=4){ h+=`<circle class="via" cx="${FX(v[i])}" cy="${flipY(v[i+1])}" r="${v[i+2]}"/>`; }
-  return h;
+  // One coalesced <path> (each via a two-arc circle subpath) instead of one <circle>
+  // per via — on a dense board that's the difference between ~1 node and tens of
+  // thousands, which is what lets a large board open at all.
+  const v=M.vias||[]; if(!v.length) return '';
+  let d='';
+  for(let i=0;i<v.length;i+=4){ const cx=FX(v[i]),cy=flipY(v[i+1]),r=v[i+2];
+    d+=`M${cx-r} ${cy}a${r} ${r} 0 1 0 ${2*r} 0a${r} ${r} 0 1 0 ${-2*r} 0`; }
+  return `<path class="via" d="${d}"/>`;
 }
 function poursSVG(){
   let h='';
@@ -425,24 +460,30 @@ function render(){
   let b='';                            // base ink (dimmed under a diff)
   if(showCopper && M.copper.length) b+=poursSVG()+copperPaths();
   if(showVias) b+=viasSVG();
-  let gi=0;                            // global pad index (matches buildNets order)
-  if(showParts) for(const p of M.parts){
-    const np=p.pads.length;
-    // a part's pads are copper on its side layer — hide the part when that layer is hidden
-    const partLayer=p.side?M.layers[M.layers.length-1]:M.layers[0];
-    if(hiddenLayers.has(partLayer)){ gi+=np; continue; }
-    const da=`data-ref="${esc(p.ref)}" data-val="${esc(p.val)}" data-t="${esc(p.t)}"`;
-    const padC=p.side?botC:topC;      // pad copper is on the component's side layer
-    const pads=np?p.pads:[[p.x-6000,p.y-6000,p.x+6000,p.y+6000,0]];
-    let li=0;
-    for(const pd of pads){
-      const pa=`${da} data-pi="${np?gi+li:-1}"`; li++;
-      const w=pd[2]-pd[0], hh=pd[3]-pd[1];       // already capped to pitch in build()
-      if(pd[4]){ b+=`<ellipse class="pad" ${pa} cx="${FX(pd[0]+w/2)}" cy="${flipY(pd[1]+hh/2)}" rx="${w/2}" ry="${hh/2}" fill="${padC}"/>`; }
-      else { b+=`<rect class="pad" ${pa} x="${FX(pd[0]+w/2)-w/2}" y="${flipY(pd[3])}" width="${w}" height="${hh}" rx="${Math.min(w,hh)*0.12}" fill="${padC}"/>`; }
+  // Pads: coalesced into at most four <path> nodes (rect/round × top/bottom side) plus
+  // one <text> per part, instead of a DOM node per pad. Part hit-testing no longer
+  // relies on these being individual elements — it uses the _padgrid spatial index
+  // (see padAt), the same way trace picking uses _pgrid.
+  if(showParts){
+    const rectT=[], rectB=[], elT=[], elB=[]; let labels='';
+    for(const p of M.parts){
+      const np=p.pads.length;
+      // a part's pads are copper on its side layer — hide the part when that layer is hidden
+      const partLayer=p.side?M.layers[M.layers.length-1]:M.layers[0];
+      if(hiddenLayers.has(partLayer)) continue;
+      const pads=np?p.pads:[[p.x-6000,p.y-6000,p.x+6000,p.y+6000,0]];
+      const rects=p.side?rectB:rectT, els=p.side?elB:elT;
+      for(const pd of pads){
+        const w=pd[2]-pd[0], hh=pd[3]-pd[1];     // already capped to pitch in build()
+        if(pd[4]){ const rx=w/2, ry=hh/2, cx=FX(pd[0]+rx), cy=flipY(pd[1]+ry);
+          els.push(`M${cx-rx} ${cy}a${rx} ${ry} 0 1 0 ${2*rx} 0a${rx} ${ry} 0 1 0 ${-2*rx} 0`); }
+        else { const x=FX(pd[0]+w/2)-w/2, y=flipY(pd[3]);
+          rects.push(`M${x} ${y}h${w}v${hh}h${-w}z`); }
+      }
+      labels+=`<text class="clbl" x="${FX(p.x)}" y="${flipY(p.y)}" font-size="${LBL}">${esc(p.ref)}</text>`;
     }
-    b+=`<text class="clbl" ${da} x="${FX(p.x)}" y="${flipY(p.y)}" font-size="${LBL}">${esc(p.ref)}</text>`;
-    gi+=np;
+    const padPath=(a,fill)=> a.length?`<path class="pad" d="${a.join('')}" fill="${fill}"/>`:'';
+    b+=padPath(rectT,topC)+padPath(elT,topC)+padPath(rectB,botC)+padPath(elB,botC)+labels;
   }
   h += DIFF ? `<g opacity="0.16">${b}</g>` + diffCopperSVG() : b;
   h+=diffSVG();
@@ -463,6 +504,7 @@ function _find(a){ if(_par[a]===undefined)_par[a]=a; let r=a; while(_par[r]!==r)
 function _uni(a,b){ _par[_find(a)]=_find(b); }
 const _LN=(M.layers&&M.layers.length)?M.layers:[0], _L0=_LN[0];
 const _padNets=[], _padMain=[];   // per pad: Set of net roots, and its dominant root
+DBG.log('buildNets: start (union-find over copper/vias/pads)…');
 (function buildNets(){
   const C=M.copper, eh={};
   for(let i=0;i<C.length;i+=7){ const L=C[i+4];
@@ -504,7 +546,35 @@ const _rootName={};   // union root -> real net name (synthetic $N names stay hi
   }
   for(let i=0;i<V.length;i+=4) _viaRoot[i/4]=_find(nqk(V[i],V[i+1])+'@'+_L0);
 })();
+DBG.log('buildNets + caches done:', {unionNodes: Object.keys(_par).length, segGridCells: _pgrid.size, namedRoots: Object.keys(_rootName).length});
 const _seen=new Int32Array((M.copper.length/7|0)+1); let _gen=0;
+// Pad spatial index — pads are drawn as coalesced paths (no per-pad DOM), so part
+// hover/click hit-tests against this grid instead of e.target. Each item is a pad's
+// board-space rect plus its part's ref/side/centre.
+const _padItems=[], PADPG=20000, _padgrid=new Map();
+(function buildPadIndex(){
+  for(const pt of M.parts){
+    const src=pt.pads.length?pt.pads:[[pt.x-6000,pt.y-6000,pt.x+6000,pt.y+6000,0]];
+    for(const pd of src){
+      const idx=_padItems.length;
+      _padItems.push({x1:pd[0],y1:pd[1],x2:pd[2],y2:pd[3],ref:pt.ref,side:pt.side,px:pt.x,py:pt.y});
+      for(let gx=Math.floor(pd[0]/PADPG);gx<=Math.floor(pd[2]/PADPG);gx++) for(let gy=Math.floor(pd[1]/PADPG);gy<=Math.floor(pd[3]/PADPG);gy++){
+        const k=gx+','+gy; let a=_padgrid.get(k); if(!a){a=[];_padgrid.set(k,a);} a.push(idx); }
+    }
+  }
+})();
+const _byRef={}; for(const pt of M.parts) _byRef[pt.ref]=pt;   // ref → part, for hover tooltips
+// Pad containing (or within tol of) a board point, honouring layer visibility; null if none.
+function padAt(bx,by){
+  const tol=8/view.k, t2=tol*tol; let best=null,bd=1e30;
+  const gx=Math.floor(bx/PADPG),gy=Math.floor(by/PADPG);
+  for(let ax=gx-1;ax<=gx+1;ax++) for(let ay=gy-1;ay<=gy+1;ay++){ const a=_padgrid.get(ax+','+ay); if(!a) continue;
+    for(const idx of a){ const it=_padItems[idx];
+      if(hiddenLayers.has(it.side?_LN[_LN.length-1]:_LN[0])) continue;
+      const dx=Math.max(it.x1-bx,0,bx-it.x2), dy=Math.max(it.y1-by,0,by-it.y2), d=dx*dx+dy*dy;
+      if(d<bd){bd=d;best=it;} } }
+  return (best && bd<=t2) ? {ref:best.ref,x:best.px,y:best.py} : null;
+}
 function traceRoot(i){ return _segRoot[i/7]; }
 function viaRoot(x,y){ return _find(nqk(x,y)+'@'+_L0); }
 let pinnedNet=null, hoverNet=null;   // net highlight: each a Set of net roots, or null
@@ -636,16 +706,9 @@ function crossProbeNet(net,peek){ const xi=xnetOfNet(net); if(xi==null){ if(peek
   showProbe({xnet:''+xi}, 'Schematic · '+(XP.xnets[xi].name||('net '+xi)), peek); }
 function crossProbeRef(ref){ showProbe({ref:ref}, 'Schematic · '+ref, false); }
 function bind(){
-  // delegated once on the scene container (survives innerHTML re-renders), instead of
-  // (re-)attaching three listeners to every pad on each render.
-  if(bind._done) return; bind._done=true;
-  scene.addEventListener('pointerover',e=>{ const el=e.target.closest('.pad,.comp'); if(!el)return;
-    const ref=el.dataset.ref;
-    scene.querySelectorAll('.pad,.comp').forEach(x=>{ if(x.dataset.ref===ref) x.classList.add('hot'); });
-    const ty=M.types[el.dataset.t], v=el.dataset.val;
-    tip.textContent=ref+(v?'  '+v:'')+'\n'+((ty&&ty.label)||el.dataset.t); tip.style.opacity=1; });
-  scene.addEventListener('pointermove',e=>{ if(e.target.closest('.pad,.comp')){ tip.style.left=(e.clientX+14)+'px'; tip.style.top=(e.clientY+14)+'px'; } });
-  scene.addEventListener('pointerout',e=>{ if(!e.target.closest('.pad,.comp'))return; scene.querySelectorAll('.hot').forEach(x=>x.classList.remove('hot')); tip.style.opacity=0; });
+  // Pads are coalesced paths now (no per-pad DOM), so part hover/click is handled by
+  // coordinate hit-testing (padAt) in the svg pointer handlers, and hover feedback is
+  // drawn in the highlight layer (drawRef on hoverRef). Nothing to delegate here.
 }
 function fit(){
   const r=svg.getBoundingClientRect(); if(!r.width) return;
@@ -659,14 +722,15 @@ function fit(){
 function zoomBy(f){ const r=svg.getBoundingClientRect(),mx=r.width/2,my=r.height/2,nk=view.k*f;
   view.x=mx-(mx-view.x)*(nk/view.k); view.y=my-(my-view.y)*(nk/view.k); view.k=nk; applyView(); }
 function pick(e){   // what's under the cursor — a part (its pad) takes priority over a trace's net
-  const pad=e.target.closest('.pad');
-  if(pad && pad.dataset.ref) return {ref:pad.dataset.ref};
-  const b=boardXY(e); const n=pickTraceNet(b[0],b[1]);
+  const b=boardXY(e);
+  const pad=padAt(b[0],b[1]);
+  if(pad) return {ref:pad.ref};
+  const n=pickTraceNet(b[0],b[1]);
   return n!=null ? {net:n} : null;
 }
 let drag=null, down=null, hoverKey=null, _peekT=null;
 const pinned=()=>pinnedNet!==null||pinnedRef!==null;
-svg.addEventListener('pointerdown',e=>{ if(MODALMODE)return; down={x:e.clientX,y:e.clientY,moved:false}; if(e.target.closest('.pad'))return; drag={x:e.clientX,y:e.clientY,vx:view.x,vy:view.y}; svg.setPointerCapture(e.pointerId); });
+svg.addEventListener('pointerdown',e=>{ if(MODALMODE)return; down={x:e.clientX,y:e.clientY,moved:false}; const bd=boardXY(e); if(padAt(bd[0],bd[1]))return; drag={x:e.clientX,y:e.clientY,vx:view.x,vy:view.y}; svg.setPointerCapture(e.pointerId); });
 svg.addEventListener('pointermove',e=>{
   if(MODALMODE)return;
   if(down && Math.abs(e.clientX-down.x)+Math.abs(e.clientY-down.y)>4) down.moved=true;
@@ -674,13 +738,16 @@ svg.addEventListener('pointermove',e=>{
   if(!pinned() && !Comments.isPlacing()){           // hover-highlight when nothing is pinned
     const p=pick(e), key=p?(p.ref?'r:'+p.ref:'n:'+p.net):null;
     if(key!==hoverKey){ hoverKey=key; hoverRef=p&&p.ref||null; hoverNet=(p&&p.net!=null)?new Set([p.net]):null; updateHighlight();
-      if(p&&p.net!=null&&_rootName[p.net]){ tip.textContent=_rootName[p.net]; tip.style.left=(e.clientX+14)+'px'; tip.style.top=(e.clientY+8)+'px'; tip.style.opacity=1; }
-      else if(!p||p.net!=null) tip.style.opacity=0;
+      if(p&&p.ref){ const pt=_byRef[p.ref], ty=pt&&M.types[pt.t];   // part → refdes + value + type
+        tip.textContent=p.ref+(pt&&pt.val?'  '+pt.val:'')+'\n'+((ty&&ty.label)||(pt&&pt.t)||''); tip.style.opacity=1; }
+      else if(p&&p.net!=null&&_rootName[p.net]){ tip.textContent=_rootName[p.net]; tip.style.opacity=1; }
+      else tip.style.opacity=0;
       // peek the schematic for the hovered net (debounced; iframe retargets via postMessage)
       clearTimeout(_peekT);
       if(p&&p.net!=null){ const nn=p.net; _peekT=setTimeout(()=>{ if(hoverKey==='n:'+nn) crossProbeNet(new Set([nn]),true); }, 200); }
       else if(modal._peek) hideModal();
     }
+    if(tip.style.opacity==='1'){ tip.style.left=(e.clientX+14)+'px'; tip.style.top=(e.clientY+8)+'px'; }   // follow cursor
   }
 });
 svg.addEventListener('pointerleave',()=>{ clearTimeout(_peekT); if(modal._peek) hideModal();
@@ -732,7 +799,9 @@ document.getElementById('sub').textContent=M.parts.length+' components · '+((M.
 if(MODALMODE) document.body.classList.add('modal');
 if(modal){ document.getElementById('xclose').onclick=hideModal;
   modal.addEventListener('click',ev=>{ if(ev.target===modal) hideModal(); }); }
+DBG.log('initial render: start (building scene SVG)…');
 render(); fit();
+DBG.log('initial render: done', {sceneNodes: scene.childElementCount, baseK: baseK});
 if(DIFF){ const el=document.getElementById('sub');
   el.innerHTML+=` · <span style="color:#8B8578">vs ${DIFF.label}</span>`+
     ` <span style="padding:1px 6px;border-radius:9px;background:rgba(26,127,55,.14);color:#1A7F37">+${DIFF.added.length}</span>`+
@@ -807,6 +876,16 @@ window.addEventListener('message',e=>{ const d=e.data; if(d&&d.type==='xprobe') 
 if(QP.get('xnet')!==null || QP.get('ref')){
   if(document.readyState==='complete') setTimeout(applyParams,40);
   else window.addEventListener('load',()=>setTimeout(applyParams,40));
+}
+DBG.log('renderModel: completed OK');
+} catch (err) {
+  DBG.error('renderModel FAILED:', (err && (err.stack || err.message)) || err);
+  try { const s=document.getElementById('svg'); if(s) s.insertAdjacentHTML('afterend',
+    '<div style="position:fixed;left:12px;bottom:12px;max-width:64ch;padding:11px 13px;'
+    +'background:#7f1d1d;color:#fff;font:12px/1.45 ui-monospace,Menlo,monospace;border-radius:9px;z-index:99999">'
+    +'⚠ Layout viewer hit an error. Open the browser console (⌥⌘J / Ctrl+Shift+J), copy the '
+    +'<b>[CanvasPCB/layout]</b> lines, and send them.</div>'); } catch(_){}
+  throw err;
 }
 };   // end window.__renderModel
 /*__BOOT__*/
