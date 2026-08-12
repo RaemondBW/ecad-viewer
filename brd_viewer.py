@@ -330,9 +330,15 @@ const DBG = (function () {
   const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
   const t0 = now();
   const ms = () => Math.round(now() - t0) + 'ms';
-  const wrap = fn => (...a) => { try { fn(TAG, ms(), ...a); } catch (e) {} };
-  return { TAG, ms, log: wrap(console.log.bind(console)), warn: wrap(console.warn.bind(console)),
-           error: wrap(console.error.bind(console)) };
+  // Every line is ALSO stored in window.__cpcbLogs so it can be copied in one shot,
+  // even if DevTools was opened after load: run  copy(window.__cpcbLogs.join('\n'))
+  const store = (window.__cpcbLogs = window.__cpcbLogs || []);
+  const fmt = a => a.map(x => { try { return typeof x === 'object' ? JSON.stringify(x) : String(x); } catch (e) { return '' + x; } }).join(' ');
+  const mk = sink => (...a) => {
+    try { store.push(TAG + ' ' + ms() + ' ' + fmt(a)); if (store.length > 800) store.shift(); } catch (e) {}
+    try { sink.call(console, TAG, ms(), ...a); } catch (e) {}
+  };
+  return { TAG, ms, log: mk(console.log), warn: mk(console.warn), error: mk(console.error) };
 })();
 window.addEventListener('error', e => DBG.error('uncaught error:', e.message,
   '@', (e.filename || '') + ':' + (e.lineno || '') + ':' + (e.colno || ''),

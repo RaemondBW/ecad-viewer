@@ -668,9 +668,15 @@ const DBG = (function () {
   const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
   const t0 = now();
   const ms = () => Math.round(now() - t0) + 'ms';
-  const wrap = fn => (...a) => { try { fn(TAG, ms(), ...a); } catch (e) {} };
-  return { TAG, ms, log: wrap(console.log.bind(console)), warn: wrap(console.warn.bind(console)),
-           error: wrap(console.error.bind(console)) };
+  // Every line is ALSO stored in window.__cpcbLogs so it can be copied in one shot,
+  // even if DevTools was opened after load: run  copy(window.__cpcbLogs.join('\n'))
+  const store = (window.__cpcbLogs = window.__cpcbLogs || []);
+  const fmt = a => a.map(x => { try { return typeof x === 'object' ? JSON.stringify(x) : String(x); } catch (e) { return '' + x; } }).join(' ');
+  const mk = sink => (...a) => {
+    try { store.push(TAG + ' ' + ms() + ' ' + fmt(a)); if (store.length > 800) store.shift(); } catch (e) {}
+    try { sink.call(console, TAG, ms(), ...a); } catch (e) {}
+  };
+  return { TAG, ms, log: mk(console.log), warn: mk(console.warn), error: mk(console.error) };
 })();
 window.addEventListener('error', e => DBG.error('uncaught error:', e.message,
   '@', (e.filename || '') + ':' + (e.lineno || '') + ':' + (e.colno || ''),
@@ -861,9 +867,36 @@ function init() {
 }
 
 /* ---------- scene ---------- */
+const _diagLogged = new Set();
+function sheetDiag(s) {
+  // Once per sheet: does each part carry pin names / numbers? If the largest parts
+  // show samplePins with name AND num both empty, that's why no inside labels render
+  // (the .dsn pinout isn't being parsed for those parts) — a data problem, not CSS.
+  if (_diagLogged.has(cur)) return; _diagLogged.add(cur);
+  let boxParts = 0, twoPin = 0, noBox = 0, pinsTotal = 0, withName = 0, withNum = 0, withNeither = 0;
+  for (const p of s.parts) {
+    if (!p.box) noBox++;
+    if (p.sym === 'box') boxParts++; else twoPin++;
+    for (const pin of p.pins) {
+      pinsTotal++;
+      if (pin[4]) withName++; else if (pin[3]) withNum++; else withNeither++;
+    }
+  }
+  const largest = s.parts.filter(p => p.sym === 'box').sort((a, b) => b.pins.length - a.pins.length)
+    .slice(0, 6).map(p => ({
+      des: p.des, pkg: p.pkg, sym: p.sym, hasBox: !!p.box,
+      boxWH: p.box ? [Math.round(p.box[2]), Math.round(p.box[3])] : null,
+      nPins: p.pins.length,
+      samplePins: p.pins.slice(0, 6).map(pin => ({ name: pin[4] || '', num: pin[3] || '', net: pin[2] || '' }))
+    }));
+  DBG.log('sheet pin-labels:', { sheet: s.id, parts: s.parts.length, boxParts, twoPinSym: twoPin,
+    partsWithoutBox: noBox, pinsTotal, withName, withNumber: withNum, withNeither });
+  DBG.log('sheet largest parts (pin data):', largest);
+}
 function renderScene() {
   const s = M.sheets[cur];
   sceneEl.innerHTML = R.sceneSVG(s, M, dctx);
+  try { sheetDiag(s); } catch (e) { DBG.error('sheetDiag failed:', e && e.message); }
   applyView();
   renderStatus();
   applyPins();
@@ -887,6 +920,18 @@ function fit() {
   view.x = (r.width - (b[0] + b[2]) * view.k) / 2;
   view.y = (r.height - (b[1] + b[3]) * view.k) / 2;
   applyView();
+  // Scale diagnostics: if labels are tiny, this shows WHY — content extent (in the
+  // schematic's own units) vs viewport, the resulting zoom, and the on-screen pixel
+  // size a 9-unit label / 8-unit pin label ends up at. If px_of_9u is ~1-3, fonts
+  // are sub-legible and the content extent (contentUnits) is the lever.
+  DBG.log('fit/scale:', {
+    sheet: s.id, hasFrame: !!s.frame, frame: s.frame, contentBox: b,
+    contentUnits: [Math.round(w), Math.round(h)],
+    viewportPx: [Math.round(r.width), Math.round(r.height)],
+    rawK: +k.toFixed(5), finalViewK: +view.k.toFixed(5), cappedAt8: k > 8,
+    px_of_9u_label: +(9 * view.k).toFixed(2), px_of_8u_pinlabel: +(8 * view.k).toFixed(2),
+    parts: s.parts.length, wires: s.wires.length
+  });
 }
 function zoomBy(f) {
   const r = svgEl.getBoundingClientRect(), mx = r.width / 2, my = r.height / 2;
