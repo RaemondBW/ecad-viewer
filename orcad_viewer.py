@@ -527,11 +527,24 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
   // (which have no local part geometry to scale from) so they don't go tiny on a
   // finely-scaled sheet. Part/passive fonts scale from their own box/pin-span instead.
   function computeUS(model) {
-    const mins = [];
-    for (const sh of (model.sheets || [])) for (const p of sh.parts) if (p.box) { const m = Math.min(p.box[2], p.box[3]); if (m > 0) mins.push(m); }
-    if (!mins.length) return 1;
-    mins.sort((a, b) => a - b);
-    return Math.max(1, Math.min(mins[mins.length >> 1] / 32, 25));
+    // Scale for the standalone net/flag labels, derived from the board's PIN PITCH (the
+    // coordinate grid) so it tracks the pin-label size — which is also pitch-driven —
+    // on any board. Median part-box was wrong here: a board of small passives + big ICs
+    // gives a small median (→ tiny net labels) while pin labels scale with each IC's own
+    // large geometry, so net labels ended up several times smaller than pin labels.
+    const pitches = [];
+    for (const sh of (model.sheets || [])) for (const p of sh.parts) {
+      if (!p.box || p.pins.length < 3) continue;
+      let mn = Infinity; const n = Math.min(p.pins.length, 16);
+      for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+        const dd = Math.hypot(p.pins[i][0] - p.pins[j][0], p.pins[i][1] - p.pins[j][1]);
+        if (dd > 1 && dd < mn) mn = dd;
+      }
+      if (isFinite(mn)) pitches.push(mn);
+    }
+    if (!pitches.length) return 1;
+    pitches.sort((a, b) => a - b);
+    return Math.max(0.5, pitches[pitches.length >> 1] / 20);   // 20 = HSD-scale pin pitch
   }
   function sceneSVG(s, model, dctx) {
     dctx = dctx || {};
