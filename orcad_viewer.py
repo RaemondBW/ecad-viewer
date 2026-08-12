@@ -604,21 +604,30 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
           if (dd > 1 && dd < _pitch) _pitch = dd;
         }
         const dfs = Math.max(8, Math.min(bw, bh) * 0.16);
-        const pnf = Math.max(5, Math.min(Math.min(bw, bh) * 0.11, isFinite(_pitch) ? _pitch * 0.62 : 1e9)), po = pnf * 0.5;
+        // Two lines per pin (number above name) sit fully INSIDE the box, so the font
+        // is smaller and capped tighter by the pin pitch to keep both lines legible.
+        const pnf = Math.max(4, Math.min(Math.min(bw, bh) * 0.09, isFinite(_pitch) ? _pitch * 0.5 : 1e9));
+        const nnf = pnf * 0.78;             // pin number a touch smaller than the name
         h += `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="2"/>`;
         h += `<text x="${cx}" y="${hasInside ? by + dfs : cy}" font-size="${dfs.toFixed(1)}">${esc(p.des)}</text>`;
         for (const pin of p.pins) {
-          const lab = pinLabel(pin);
+          const nm = pin[4], num = pin[3] || '';
+          const lab = nm || num;            // primary label = name, else the number
           if (!lab) continue;
           const px = pin[0], py = pin[1];
           const dL = Math.abs(px - bx), dR = Math.abs(px - (bx + bw)), dT = Math.abs(py - by), dB = Math.abs(py - (by + bh));
-          const mn = Math.min(dL, dR, dT, dB);
-          let tx = px, ty = py, anchor = 'middle';
-          if (mn === dL) { tx = px + po; anchor = 'start'; }
-          else if (mn === dR) { tx = px - po; anchor = 'end'; }
-          else if (mn === dT) { ty = py + po * 1.6; }
-          else { ty = py - po; }
-          h += `<text class="pinname" x="${tx}" y="${ty}" font-size="${pnf.toFixed(1)}" text-anchor="${anchor}" dominant-baseline="central">${esc(lab)}</text>`;
+          const mn = Math.min(dL, dR, dT, dB), gap = pnf * 0.65;
+          // Anchor the label to the box EDGE nearest the pin, growing inward, so it's
+          // always fully inside the part regardless of where the pin stub ends.
+          let tx = px, nameY = py, anchor = 'middle';
+          if (mn === dL) { tx = bx + gap; anchor = 'start'; }
+          else if (mn === dR) { tx = bx + bw - gap; anchor = 'end'; }
+          else if (mn === dT) { nameY = by + gap + pnf; }
+          else { nameY = by + bh - gap - pnf * 0.3; }
+          h += `<text class="pinname" x="${tx.toFixed(1)}" y="${nameY.toFixed(1)}" font-size="${pnf.toFixed(1)}" text-anchor="${anchor}" dominant-baseline="central">${esc(lab)}</text>`;
+          if (nm && num) {                  // pin number stacked just above the name
+            h += `<text class="pinnum" x="${tx.toFixed(1)}" y="${(nameY - pnf * 0.92).toFixed(1)}" font-size="${nnf.toFixed(1)}" text-anchor="${anchor}" dominant-baseline="central">${esc(num)}</text>`;
+          }
         }
       }
       h += `</g>`;
