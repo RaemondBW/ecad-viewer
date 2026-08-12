@@ -615,15 +615,16 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
           const lab = nm || num;            // primary label = name, else the number
           if (!lab) continue;
           const px = pin[0], py = pin[1];
-          const dL = Math.abs(px - bx), dR = Math.abs(px - (bx + bw)), dT = Math.abs(py - by), dB = Math.abs(py - (by + bh));
-          const mn = Math.min(dL, dR, dT, dB), gap = pnf * 0.65;
-          // Anchor the label to the box EDGE nearest the pin, growing inward, so it's
-          // always fully inside the part regardless of where the pin stub ends.
+          // Offset the label from the PIN toward the box CENTRE — the pin sits inside
+          // the border (pad), so anchoring to the pin (not the border) keeps the label
+          // clear of the border and the wire stub, fully inside the part.
+          const eL = px - bx, eR = (bx + bw) - px, eT = py - by, eB = (by + bh) - py;
+          const mn = Math.min(eL, eR, eT, eB), ins = pnf * 0.55;
           let tx = px, nameY = py, anchor = 'middle';
-          if (mn === dL) { tx = bx + gap; anchor = 'start'; }
-          else if (mn === dR) { tx = bx + bw - gap; anchor = 'end'; }
-          else if (mn === dT) { nameY = by + gap + pnf; }
-          else { nameY = by + bh - gap - pnf * 0.3; }
+          if (mn === eL) { tx = px + ins; anchor = 'start'; }
+          else if (mn === eR) { tx = px - ins; anchor = 'end'; }
+          else if (mn === eT) { nameY = py + ins + pnf * 0.45; }
+          else { nameY = py - ins - pnf * 0.45; }
           h += `<text class="pinname" x="${tx.toFixed(1)}" y="${nameY.toFixed(1)}" font-size="${pnf.toFixed(1)}" text-anchor="${anchor}" dominant-baseline="central">${esc(lab)}</text>`;
           if (nm && num) {                  // pin number stacked just above the name
             h += `<text class="pinnum" x="${tx.toFixed(1)}" y="${(nameY - pnf * 0.92).toFixed(1)}" font-size="${nnf.toFixed(1)}" text-anchor="${anchor}" dominant-baseline="central">${esc(num)}</text>`;
