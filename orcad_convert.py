@@ -688,9 +688,15 @@ def _symbol_pins(data, a, b):
 def assign_pin_names(placed, sym_pins):
     """Map an instance's placed pins [(idx,x,y)] to a symbol's pins
     [(name,sx,sy)] via the rigid transform (rotation k·90° + optional mirror +
-    translation) that best aligns the two point sets. Returns {idx: pin_name}.
-    Empty if counts differ or no orientation aligns."""
-    if not sym_pins or len(placed) != len(sym_pins):
+    translation) that aligns the most pins. Returns {idx: pin_name}.
+
+    Works when the placed instance uses only a SUBSET of the symbol's pins — a
+    connector with unused pins, a part where some pins didn't parse, etc. The old
+    code required len(placed)==len(sym_pins) and bailed otherwise, so those parts
+    (e.g. a PCI header: 37 placed vs 64 in the symbol) got no names at all. Here we
+    anchor a few placed pins against every symbol pin per orientation and keep the
+    alignment that matches the most, so a subset still resolves its names."""
+    if not sym_pins or not placed:
         return {}
     S = [(sx, sy) for _, sx, sy in sym_pins]
     P = [(x, y) for _, x, y in placed]
@@ -703,25 +709,57 @@ def assign_pin_names(placed, sym_pins):
             x, y = -y, x
         return x, y
 
+    TOL = 12
+    qk = lambda x, y: (round(x / TOL), round(y / TOL))
+    pgrid = {}
+    for pi, (px, py) in enumerate(P):
+        pgrid.setdefault(qk(px, py), []).append(pi)
+
+    def match_at(T, tx, ty):
+        used, m = set(), {}
+        for si, (x, y) in enumerate(T):
+            sx, sy = x + tx, y + ty
+            kx, ky = qk(sx, sy)
+            hit = None
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for pi in pgrid.get((kx + dx, ky + dy), ()):
+                        if pi not in used and abs(P[pi][0] - sx) < TOL and abs(P[pi][1] - sy) < TOL:
+                            hit = pi
+                            break
+                    if hit is not None:
+                        break
+                if hit is not None:
+                    break
+            if hit is not None:
+                used.add(hit)
+                m[hit] = si
+        return m
+
+    # Anchor a few placed pins against every symbol pin, over all 8 orientations;
+    # each (anchor, symbol-pin) pair fixes a translation to score.
+    anchors = {P[0], P[len(P) // 2], P[-1]}
     best = (0, {})
+    done = False
     for r in range(4):
+        if done:
+            break
         for mir in (0, 1):
             T = [xf(pt, r, mir) for pt in S]
-            tx = sum(x for x, _ in P) / len(P) - sum(x for x, _ in T) / len(T)
-            ty = sum(y for _, y in P) / len(P) - sum(y for _, y in T) / len(T)
-            used = [False] * len(P)
-            m = {}
-            for si, (x, y) in enumerate(T):
-                sxp, syp = x + tx, y + ty
-                for pi, (px, py) in enumerate(P):
-                    if not used[pi] and abs(sxp - px) < 10 and abs(syp - py) < 10:
-                        used[pi] = True
-                        m[pi] = si
-                        break
-            if len(m) > best[0]:
-                best = (len(m), m)
+            for (ax, ay) in anchors:
+                for (tsx, tsy) in T:
+                    m = match_at(T, ax - tsx, ay - tsy)
+                    if len(m) > best[0]:
+                        best = (len(m), m)
+                        if best[0] == len(P):     # every placed pin matched — can't do better
+                            done = True
+                            break
+                if done:
+                    break
+            if done:
+                break
     idx_to_name = {}
-    if best[0] >= max(2, len(placed) * 0.6):
+    if best[0] >= max(2, len(placed) * 0.5):
         for pi, si in best[1].items():
             idx_to_name[placed[pi][0]] = sym_pins[si][0]
     return idx_to_name

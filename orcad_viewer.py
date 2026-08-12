@@ -481,7 +481,7 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
     // so this tracks the board's coordinate scale — no absolute cap, or text/symbols
     // go tiny on a finely-scaled sheet). sc keeps the glyph's aspect ratio; fs the label.
     const bl = Math.max(9, L * 0.34), sc = bl / 14;
-    const w = 5.5 * sc, fs = Math.max(9, bl * 0.55);
+    const w = 5.5 * sc, fs = Math.max(9, bl * 0.42);
     const P = (t, s) => [cx + ux * t + vx * s, cy + uy * t + vy * s];
     const M = (p) => p[0].toFixed(1) + ' ' + p[1].toFixed(1);
     const line = (p, q, c = 'sym') => `<line class="${c}" x1="${p[0].toFixed(1)}" y1="${p[1].toFixed(1)}" x2="${q[0].toFixed(1)}" y2="${q[1].toFixed(1)}"/>`;
@@ -518,7 +518,8 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
       svg += line(a, e1, 'lead') + line(b, e2, 'lead');
     }
     svg += `<rect class="hit" x="${(cx - Math.abs(ux) * bl - Math.abs(vx) * w - 2).toFixed(1)}" y="${(cy - Math.abs(uy) * bl - Math.abs(vy) * w - 2).toFixed(1)}" width="${(2 * (Math.abs(ux) * bl + Math.abs(vx) * w + 2)).toFixed(1)}" height="${(2 * (Math.abs(uy) * bl + Math.abs(vy) * w + 2)).toFixed(1)}"/>`;
-    const off = w + 7 * sc, lx = cx + vx * off, ly = cy + vy * off;
+    // Push the (two-line) label clear of the body so it never sits on the symbol.
+    const off = w + fs * 1.25, lx = cx + vx * off, ly = cy + vy * off;
     return { svg, lx, ly, fs };
   }
   // Board unit-scale: how large this design's coordinate units are vs the tuning
@@ -594,10 +595,16 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
         // header, an unnamed IC) still show pin labels instead of a bare box.
         const pinLabel = pin => pin[4] || pin[3] || '';
         const hasInside = p.pins.some(pin => pinLabel(pin));
-        // Designator + pin-label sizes track the box size (in the schematic's own units)
-        // so they scale with the board's coordinate scale instead of pinning to ~13/8.
-        const dfs = Math.max(8, Math.min(bw, bh) * 0.2);
-        const pnf = Math.max(6, Math.min(bw, bh) * 0.11), po = pnf * 0.5;
+        // Designator tracks the box size; pin labels are ALSO capped by the tightest
+        // pin spacing so a densely-pinned part (a connector, a big IC) doesn't overlap
+        // its own pin labels. Both scale with the board's coordinate units.
+        let _pitch = Infinity;
+        for (let i = 0; i < p.pins.length; i++) for (let j = i + 1; j < p.pins.length; j++) {
+          const dd = Math.hypot(p.pins[i][0] - p.pins[j][0], p.pins[i][1] - p.pins[j][1]);
+          if (dd > 1 && dd < _pitch) _pitch = dd;
+        }
+        const dfs = Math.max(8, Math.min(bw, bh) * 0.16);
+        const pnf = Math.max(5, Math.min(Math.min(bw, bh) * 0.11, isFinite(_pitch) ? _pitch * 0.62 : 1e9)), po = pnf * 0.5;
         h += `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="2"/>`;
         h += `<text x="${cx}" y="${hasInside ? by + dfs : cy}" font-size="${dfs.toFixed(1)}">${esc(p.des)}</text>`;
         for (const pin of p.pins) {
