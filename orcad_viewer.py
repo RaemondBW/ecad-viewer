@@ -240,6 +240,18 @@ html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#E9E7E1;
 .sch-scene .comp .lbl,.sch-scene .comp .val,.sch-scene .comp .pinname{font-family:'IBM Plex Mono',monospace;fill:var(--p-comp)}
 .sch-scene .comp .pinnum{font-family:'IBM Plex Mono',monospace;fill:var(--p-pinnum)}
 .sch-scene .nlabel{fill:var(--p-net);font-family:'IBM Plex Mono',monospace;dominant-baseline:middle}
+/* Minimum ON-SCREEN label size. Text lives inside scene's scale(k) transform, so a
+   font of N user-units shows at N*k px — on a large sheet fit to ~10% that's sub-pixel.
+   --kinv (=1/k, set in applyView) lets each label floor its screen size: font-size =
+   max(natural, targetPx/k user-units), i.e. it scales with zoom normally but never
+   renders smaller than ~targetPx on screen. This is what keeps labels legible
+   regardless of page size. (Overrides the per-element font-size presentation attrs.) */
+.sch-scene .comp text{font-size:max(11px,calc(12px * var(--kinv,1)))}
+.sch-scene .comp .pinname{font-size:max(8px,calc(9px * var(--kinv,1)))}
+.sch-scene .comp .pinnum{font-size:max(7px,calc(8px * var(--kinv,1)))}
+.sch-scene .comp .val{font-size:max(8px,calc(9px * var(--kinv,1)))}
+.sch-scene .nlabel{font-size:max(9px,calc(10px * var(--kinv,1)))}
+.sch-scene .flabel{font-size:max(8px,calc(9px * var(--kinv,1)))}
 .sch-scene .junction{fill:var(--p-jct);stroke:none}
 .sch-scene .flag{fill:none;stroke:var(--p-comp);stroke-width:1.2;vector-effect:non-scaling-stroke;stroke-linejoin:round;stroke-linecap:round}
 .sch-scene .flag.fill{fill:var(--p-comp)}
@@ -745,6 +757,7 @@ function driveFrame(target) {   // target: {ref}|{xnet} with .href, or null to h
 let cur = 0, pinNets = [], selDes = null, selPi = null, selNet = null, cardPinned = false, q = '', searchFocus = false, _cmtSheet = -1;
 let bomOpen = false, bomQ = '', dark = false, collapsed = {}, sheetsOpen = true, ready = false;
 let view = { x: 0, y: 0, k: 1 };
+let baseK = 1;   // the fit-to-whole-sheet scale; the zoom % is shown relative to it (fit = 100%)
 let netSheets, netNames, bomAll, partCount, thumbs, dctx;
 // distinct highlight colors for multi-net pinning (readable on light + dark)
 const PALETTE = ['#EA580C', '#2563EB', '#16A34A', '#9333EA', '#DB2777', '#0891B2', '#CA8A04', '#DC2626'];
@@ -906,17 +919,32 @@ function renderScene() {
 }
 function applyView() {
   sceneEl.setAttribute('transform', `translate(${view.x},${view.y}) scale(${view.k})`);
-  $('tb-zoom').textContent = Math.round(view.k * 100) + '%';
+  // Drives the min-on-screen-font CSS (max(natural, targetPx/k)) so labels stay legible
+  // at any zoom / page size. Guarded against k→0.
+  sceneEl.style.setProperty('--kinv', (1 / Math.max(view.k, 1e-4)).toFixed(4));
+  $('tb-zoom').textContent = Math.round(view.k / baseK * 100) + '%';   // 100% = whole sheet fits
   updateVp();
   if (window.Comments) Comments.reproject();
 }
 function fit() {
   if (!svgEl || !ready) return;
-  const s = M.sheets[cur], b = R.contentBox(s), r = svgEl.getBoundingClientRect();
+  const s = M.sheets[cur], r = svgEl.getBoundingClientRect();
   if (!r.width || !r.height) return;
+  // Fit the WHOLE sheet: the page frame AND all content (union), so nothing is cropped
+  // — earlier percentile cropping is why "fit" didn't show the entire sheet. Labels stay
+  // readable via the min-on-screen-font CSS even when this zooms way out.
+  let b = s.frame ? s.frame.slice() : null;
+  let x0 = 1e18, y0 = 1e18, x1 = -1e18, y1 = -1e18, n = 0;
+  const e = (x, y) => { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; n++; };
+  for (const w of s.wires) { e(w[0], w[1]); e(w[2], w[3]); }
+  for (const p of s.parts) { if (p.box) { e(p.box[0], p.box[1]); e(p.box[0] + p.box[2], p.box[1] + p.box[3]); } }
+  for (const l of (s.labels || [])) { e(l.x, l.y); }
+  if (n) b = b ? [Math.min(b[0], x0), Math.min(b[1], y0), Math.max(b[2], x1), Math.max(b[3], y1)] : [x0, y0, x1, y1];
+  if (!b) b = s.bbox || [0, 0, 1000, 1000];
   const w = Math.max(b[2] - b[0], 10), h = Math.max(b[3] - b[1], 10);
   const pad = 46, k = Math.min((r.width - 2 * pad) / w, (r.height - 2 * pad) / h);
   view.k = Math.min(k, 8);
+  baseK = view.k;   // this fit scale is "100%"; zoom % is shown relative to it
   view.x = (r.width - (b[0] + b[2]) * view.k) / 2;
   view.y = (r.height - (b[1] + b[3]) * view.k) / 2;
   applyView();
@@ -935,7 +963,9 @@ function fit() {
 }
 function zoomBy(f) {
   const r = svgEl.getBoundingClientRect(), mx = r.width / 2, my = r.height / 2;
-  const nk = Math.min(20, Math.max(0.05, view.k * f));
+  // Zoom range is relative to the fit scale (baseK = 100%), so a huge sheet can still
+  // zoom out to fit and in to read: 50% … 4000%.
+  const nk = Math.min(baseK * 40, Math.max(baseK * 0.5, view.k * f));
   view.x = mx - (mx - view.x) * (nk / view.k);
   view.y = my - (my - view.y) * (nk / view.k);
   view.k = nk; applyView();
@@ -996,7 +1026,7 @@ function bindCanvas() {
   el.addEventListener('wheel', e => {
     e.preventDefault();
     const r = el.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
-    const f = Math.exp(-e.deltaY * 0.0015), nk = Math.min(20, Math.max(0.05, view.k * f));
+    const f = Math.exp(-e.deltaY * 0.0015), nk = Math.min(baseK * 40, Math.max(baseK * 0.5, view.k * f));
     view.x = mx - (mx - view.x) * (nk / view.k);
     view.y = my - (my - view.y) * (nk / view.k);
     view.k = nk; applyView();
