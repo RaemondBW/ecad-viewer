@@ -425,11 +425,11 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
     const vert = (f.orient === 'u' || f.orient === 'd');
     const sideLabel = () => {
       if (!f.net) return '';
-      const lp = P(-3 * US, -3.5 * US);
+      const lp = P(-4 * US, -5 * US);
       const lx = lp[0].toFixed(1), ly = lp[1].toFixed(1);
       const anc = vert ? (f.orient === 'd' ? 'start' : 'end') : (f.orient === 'l' ? 'start' : 'end');
       const rot = vert ? ` transform="rotate(-90 ${lx} ${ly})"` : '';
-      return `<text class="flabel" x="${lx}" y="${ly}" font-size="${(8 * US).toFixed(1)}" text-anchor="${anc}" dominant-baseline="central"${rot}>${esc(f.net)}</text>`;
+      return `<text class="flabel" x="${lx}" y="${ly}" font-size="${(12 * US).toFixed(1)}" text-anchor="${anc}" dominant-baseline="central"${rot}>${esc(f.net)}</text>`;
     };
     let g = `<g class="flagg"${nk}>`;
     if (f.kind === 'gnd') {
@@ -615,18 +615,15 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
           const lab = nm || num;            // primary label = name, else the number
           if (!lab) continue;
           const px = pin[0], py = pin[1];
-          // Offset the label from the PIN toward the box CENTRE — the pin sits inside
-          // the border (pad), so anchoring to the pin (not the border) keeps the label
-          // clear of the border and the wire stub, fully inside the part.
-          const eL = px - bx, eR = (bx + bw) - px, eT = py - by, eB = (by + bh) - py;
-          const mn = Math.min(eL, eR, eT, eB), ins = pnf * 0.55;
-          let tx = px, nameY = py, anchor = 'middle';
-          if (mn === eL) { tx = px + ins; anchor = 'start'; }
-          else if (mn === eR) { tx = px - ins; anchor = 'end'; }
-          else if (mn === eT) { nameY = py + ins + pnf * 0.45; }
-          else { nameY = py - ins - pnf * 0.45; }
+          // Left/right-align each pin label to the box edge on the pin's side (by which
+          // half of the box the pin sits in), so the names line up along the left and
+          // right edges like a real IC. Small inset so the text just clears the border.
+          const m = pnf * 0.55;
+          let tx, nameY = py, anchor;
+          if (px < bx + bw / 2) { tx = bx + m; anchor = 'start'; }
+          else { tx = bx + bw - m; anchor = 'end'; }
           h += `<text class="pinname" x="${tx.toFixed(1)}" y="${nameY.toFixed(1)}" font-size="${pnf.toFixed(1)}" text-anchor="${anchor}" dominant-baseline="central">${esc(lab)}</text>`;
-          if (nm && num) {                  // pin number stacked just above the name
+          if (nm && num && num !== nm) {     // pin number above the name (skip if identical)
             h += `<text class="pinnum" x="${tx.toFixed(1)}" y="${(nameY - pnf * 0.92).toFixed(1)}" font-size="${nnf.toFixed(1)}" text-anchor="${anchor}" dominant-baseline="central">${esc(num)}</text>`;
           }
         }
@@ -647,7 +644,7 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
     for (const f of s.connectors || []) h += flagSVG(f, fc, US);
     for (const j of s.junctions || []) h += `<circle class="junction" cx="${j[0]}" cy="${j[1]}" r="1.6"/>`;
     for (const l of s.labels) {
-      h += `<text class="nlabel" data-net="${esc(l.key)}" x="${l.x}" y="${(l.y - 3 * US).toFixed(1)}" font-size="${(9 * US).toFixed(1)}">${esc(l.text)}</text>`;
+      h += `<text class="nlabel" data-net="${esc(l.key)}" x="${l.x}" y="${(l.y - 4 * US).toFixed(1)}" font-size="${(14 * US).toFixed(1)}">${esc(l.text)}</text>`;
     }
     h += titleblockSVG(s.tb, model.titleblock);
     return h;
