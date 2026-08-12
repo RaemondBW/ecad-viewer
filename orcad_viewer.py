@@ -544,7 +544,10 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
     }
     if (!pitches.length) return 1;
     pitches.sort((a, b) => a - b);
-    return Math.max(0.5, pitches[pitches.length >> 1] / 20);   // 20 = HSD-scale pin pitch
+    // 75th percentile (not median): a board of many tiny passives + a few big ICs has a
+    // small median, but net labels should read at the scale of the bigger parts the eye
+    // compares them to. 20 = HSD-scale pin pitch.
+    return Math.max(0.5, pitches[Math.floor(pitches.length * 0.75)] / 20);
   }
   function sceneSVG(s, model, dctx) {
     dctx = dctx || {};
