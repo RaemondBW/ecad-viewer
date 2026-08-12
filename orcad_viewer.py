@@ -240,18 +240,6 @@ html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#E9E7E1;
 .sch-scene .comp .lbl,.sch-scene .comp .val,.sch-scene .comp .pinname{font-family:'IBM Plex Mono',monospace;fill:var(--p-comp)}
 .sch-scene .comp .pinnum{font-family:'IBM Plex Mono',monospace;fill:var(--p-pinnum)}
 .sch-scene .nlabel{fill:var(--p-net);font-family:'IBM Plex Mono',monospace;dominant-baseline:middle}
-/* Minimum ON-SCREEN label size. Text lives inside scene's scale(k) transform, so a
-   font of N user-units shows at N*k px — on a large sheet fit to ~10% that's sub-pixel.
-   --kinv (=1/k, set in applyView) lets each label floor its screen size: font-size =
-   max(natural, targetPx/k user-units), i.e. it scales with zoom normally but never
-   renders smaller than ~targetPx on screen. This is what keeps labels legible
-   regardless of page size. (Overrides the per-element font-size presentation attrs.) */
-.sch-scene .comp text{font-size:max(11px,calc(12px * var(--kinv,1)))}
-.sch-scene .comp .pinname{font-size:max(8px,calc(9px * var(--kinv,1)))}
-.sch-scene .comp .pinnum{font-size:max(7px,calc(8px * var(--kinv,1)))}
-.sch-scene .comp .val{font-size:max(8px,calc(9px * var(--kinv,1)))}
-.sch-scene .nlabel{font-size:max(9px,calc(10px * var(--kinv,1)))}
-.sch-scene .flabel{font-size:max(8px,calc(9px * var(--kinv,1)))}
 .sch-scene .junction{fill:var(--p-jct);stroke:none}
 .sch-scene .flag{fill:none;stroke:var(--p-comp);stroke-width:1.2;vector-effect:non-scaling-stroke;stroke-linejoin:round;stroke-linecap:round}
 .sch-scene .flag.fill{fill:var(--p-comp)}
@@ -895,15 +883,17 @@ function sheetDiag(s) {
       if (pin[4]) withName++; else if (pin[3]) withNum++; else withNeither++;
     }
   }
+  const symPkgs = new Set(M.symPkgs || []);   // packages that have a cached symbol def (→ pin names)
   const largest = s.parts.filter(p => p.sym === 'box').sort((a, b) => b.pins.length - a.pins.length)
     .slice(0, 6).map(p => ({
-      des: p.des, pkg: p.pkg, sym: p.sym, hasBox: !!p.box,
+      des: p.des, pkg: p.pkg, sym: p.sym, hasBox: !!p.box, hasSymDef: symPkgs.has(p.pkg),
       boxWH: p.box ? [Math.round(p.box[2]), Math.round(p.box[3])] : null,
       nPins: p.pins.length,
       samplePins: p.pins.slice(0, 6).map(pin => ({ name: pin[4] || '', num: pin[3] || '', net: pin[2] || '' }))
     }));
   DBG.log('sheet pin-labels:', { sheet: s.id, parts: s.parts.length, boxParts, twoPinSym: twoPin,
-    partsWithoutBox: noBox, pinsTotal, withName, withNumber: withNum, withNeither });
+    partsWithoutBox: noBox, pinsTotal, withName, withNumber: withNum, withNeither,
+    symbolDefsTotal: (M.symPkgs || []).length });
   DBG.log('sheet largest parts (pin data):', largest);
 }
 function renderScene() {
@@ -919,9 +909,6 @@ function renderScene() {
 }
 function applyView() {
   sceneEl.setAttribute('transform', `translate(${view.x},${view.y}) scale(${view.k})`);
-  // Drives the min-on-screen-font CSS (max(natural, targetPx/k)) so labels stay legible
-  // at any zoom / page size. Guarded against k→0.
-  sceneEl.style.setProperty('--kinv', (1 / Math.max(view.k, 1e-4)).toFixed(4));
   $('tb-zoom').textContent = Math.round(view.k / baseK * 100) + '%';   // 100% = whole sheet fits
   updateVp();
   if (window.Comments) Comments.reproject();

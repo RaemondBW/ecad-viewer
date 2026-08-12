@@ -234,13 +234,20 @@ def load_dsn(path):
             page = entry[-1]
             pages[f"{view}/{page}"] = ole.openstream(entry).read()
     titleblock, symbols = None, {}
-    if ole.exists("Cache"):
+    _cache_ok = ole.exists("Cache")
+    if _cache_ok:
         try:
             cache = ole.openstream("Cache").read()
             titleblock = _extract_titleblock(cache)
             symbols = parse_cache_symbols(cache)
-        except Exception:
+        except Exception as e:
             titleblock, symbols = None, {}
+            print(f"  ! symbol Cache present but failed to parse ({e}); "
+                  f"pin NAMES unavailable — parts will show pin numbers")
+    # Pin names come from these cached symbol defs; log coverage for diagnostics.
+    print(f"  symbols: Cache {'present' if _cache_ok else 'ABSENT'}, "
+          f"{len(symbols)} symbol definition(s) parsed"
+          + ("" if symbols else " → no pin names (parts show pin numbers)"))
     design = {"pages": {}, "titleblock": titleblock, "symbols": symbols}
     for pageid, data in pages.items():
         net_win = _detect_net_window(data)
@@ -518,7 +525,10 @@ def build_sheets(design):
             "n": i + 1, "total": total, "company": "Cadence",
         }
 
-    return {"name": "", "sheets": sheets, "titleblock": tb_geom}
+    # Packages that have a cached symbol definition (source of pin NAMES). If a box
+    # part's package isn't here, no pin names can be assigned → it shows pin numbers.
+    sym_pkgs = sorted(design.get("symbols", {}).keys())
+    return {"name": "", "sheets": sheets, "titleblock": tb_geom, "symPkgs": sym_pkgs}
 
 
 def _looks_passive(pkg, des):
