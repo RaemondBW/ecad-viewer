@@ -413,7 +413,8 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
     s += `<text class="tb-val" x="${ox + 285}" y="${oy + 131}" font-size="9" text-anchor="middle">${tb.total}</text>`;
     return s;
   }
-  function flagSVG(f, ctr) {
+  function flagSVG(f, ctr, US) {
+    US = US || 1;
     const x = f.x, y = f.y;
     const dir = { u: [0, -1], d: [0, 1], l: [-1, 0], r: [1, 0] }[f.orient || 'd'];
     const ux = dir[0], uy = dir[1], vx = -uy, vy = ux;
@@ -424,11 +425,11 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
     const vert = (f.orient === 'u' || f.orient === 'd');
     const sideLabel = () => {
       if (!f.net) return '';
-      const lp = P(-3, -3.5);
+      const lp = P(-3 * US, -3.5 * US);
       const lx = lp[0].toFixed(1), ly = lp[1].toFixed(1);
       const anc = vert ? (f.orient === 'd' ? 'start' : 'end') : (f.orient === 'l' ? 'start' : 'end');
       const rot = vert ? ` transform="rotate(-90 ${lx} ${ly})"` : '';
-      return `<text class="flabel" x="${lx}" y="${ly}" font-size="8" text-anchor="${anc}" dominant-baseline="central"${rot}>${esc(f.net)}</text>`;
+      return `<text class="flabel" x="${lx}" y="${ly}" font-size="${(8 * US).toFixed(1)}" text-anchor="${anc}" dominant-baseline="central"${rot}>${esc(f.net)}</text>`;
     };
     let g = `<g class="flagg"${nk}>`;
     if (f.kind === 'gnd') {
@@ -476,11 +477,11 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
     const L = Math.hypot(dx, dy) || 40;
     const ux = dx / L, uy = dy / L, vx = -uy, vy = ux;
     const cx = (a[0] + b[0]) / 2, cy = (a[1] + b[1]) / 2;
-    // Body scales with the pin span (as an IC scales with its box) so a passive is
-    // never a speck between long leads; floored so a tight part still reads. `sc`
-    // scales the originally 11-mil-tuned glyph widths with it; `fs` sizes the label.
-    const bl = Math.max(9, Math.min(L * 0.34, 40)), sc = Math.max(1, Math.min(bl / 11, 2.4));
-    const w = 5.5 * sc, fs = Math.max(12, Math.min(bl * 0.6, 22));
+    // Body + label scale with the pin span L (which is in the schematic's own units,
+    // so this tracks the board's coordinate scale — no absolute cap, or text/symbols
+    // go tiny on a finely-scaled sheet). sc keeps the glyph's aspect ratio; fs the label.
+    const bl = Math.max(9, L * 0.34), sc = bl / 14;
+    const w = 5.5 * sc, fs = Math.max(9, bl * 0.55);
     const P = (t, s) => [cx + ux * t + vx * s, cy + uy * t + vy * s];
     const M = (p) => p[0].toFixed(1) + ' ' + p[1].toFixed(1);
     const line = (p, q, c = 'sym') => `<line class="${c}" x1="${p[0].toFixed(1)}" y1="${p[1].toFixed(1)}" x2="${q[0].toFixed(1)}" y2="${q[1].toFixed(1)}"/>`;
@@ -520,8 +521,20 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
     const off = w + 7 * sc, lx = cx + vx * off, ly = cy + vy * off;
     return { svg, lx, ly, fs };
   }
+  // Board unit-scale: how large this design's coordinate units are vs the tuning
+  // baseline (a median passive box of ~32). Used to size standalone net/flag labels
+  // (which have no local part geometry to scale from) so they don't go tiny on a
+  // finely-scaled sheet. Part/passive fonts scale from their own box/pin-span instead.
+  function computeUS(model) {
+    const mins = [];
+    for (const sh of (model.sheets || [])) for (const p of sh.parts) if (p.box) { const m = Math.min(p.box[2], p.box[3]); if (m > 0) mins.push(m); }
+    if (!mins.length) return 1;
+    mins.sort((a, b) => a - b);
+    return Math.max(1, Math.min(mins[mins.length >> 1] / 32, 25));
+  }
   function sceneSVG(s, model, dctx) {
     dctx = dctx || {};
+    const US = model._us != null ? model._us : (model._us = computeUS(model));
     const diff = dctx.diff, addedSet = dctx.addedSet || new Set(), chgSet = dctx.chgSet || new Set();
     let h = '';
     if (s.frame) {
@@ -581,9 +594,12 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
         // header, an unnamed IC) still show pin labels instead of a bare box.
         const pinLabel = pin => pin[4] || pin[3] || '';
         const hasInside = p.pins.some(pin => pinLabel(pin));
-        const fs = Math.max(8, Math.min(13, Math.min(bw, bh) * 0.35));
+        // Designator + pin-label sizes track the box size (in the schematic's own units)
+        // so they scale with the board's coordinate scale instead of pinning to ~13/8.
+        const dfs = Math.max(8, Math.min(bw, bh) * 0.2);
+        const pnf = Math.max(6, Math.min(bw, bh) * 0.11), po = pnf * 0.5;
         h += `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="2"/>`;
-        h += `<text x="${cx}" y="${hasInside ? by + 9 : cy}" font-size="${fs}">${esc(p.des)}</text>`;
+        h += `<text x="${cx}" y="${hasInside ? by + dfs : cy}" font-size="${dfs.toFixed(1)}">${esc(p.des)}</text>`;
         for (const pin of p.pins) {
           const lab = pinLabel(pin);
           if (!lab) continue;
@@ -591,11 +607,11 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
           const dL = Math.abs(px - bx), dR = Math.abs(px - (bx + bw)), dT = Math.abs(py - by), dB = Math.abs(py - (by + bh));
           const mn = Math.min(dL, dR, dT, dB);
           let tx = px, ty = py, anchor = 'middle';
-          if (mn === dL) { tx = px + 3; anchor = 'start'; }
-          else if (mn === dR) { tx = px - 3; anchor = 'end'; }
-          else if (mn === dT) { ty = py + 7; }
-          else { ty = py - 3; }
-          h += `<text class="pinname" x="${tx}" y="${ty}" font-size="8" text-anchor="${anchor}" dominant-baseline="central">${esc(lab)}</text>`;
+          if (mn === dL) { tx = px + po; anchor = 'start'; }
+          else if (mn === dR) { tx = px - po; anchor = 'end'; }
+          else if (mn === dT) { ty = py + po * 1.6; }
+          else { ty = py - po; }
+          h += `<text class="pinname" x="${tx}" y="${ty}" font-size="${pnf.toFixed(1)}" text-anchor="${anchor}" dominant-baseline="central">${esc(lab)}</text>`;
         }
       }
       h += `</g>`;
@@ -611,10 +627,10 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
     if (diff) for (const gh of (dctx.removedGeom && dctx.removedGeom[s.id]) || [])  // removed part, drawn in place, red
       h += compSVG(gh, -1, 'comp ghost');
     const fc = s.frame ? [(s.frame[0] + s.frame[2]) / 2, (s.frame[1] + s.frame[3]) / 2] : null;
-    for (const f of s.connectors || []) h += flagSVG(f, fc);
+    for (const f of s.connectors || []) h += flagSVG(f, fc, US);
     for (const j of s.junctions || []) h += `<circle class="junction" cx="${j[0]}" cy="${j[1]}" r="1.6"/>`;
     for (const l of s.labels) {
-      h += `<text class="nlabel" data-net="${esc(l.key)}" x="${l.x}" y="${l.y - 3}" font-size="9">${esc(l.text)}</text>`;
+      h += `<text class="nlabel" data-net="${esc(l.key)}" x="${l.x}" y="${(l.y - 3 * US).toFixed(1)}" font-size="${(9 * US).toFixed(1)}">${esc(l.text)}</text>`;
     }
     h += titleblockSVG(s.tb, model.titleblock);
     return h;
@@ -893,7 +909,7 @@ function sheetDiag(s) {
     }));
   DBG.log('sheet pin-labels:', { sheet: s.id, parts: s.parts.length, boxParts, twoPinSym: twoPin,
     partsWithoutBox: noBox, pinsTotal, withName, withNumber: withNum, withNeither,
-    symbolDefsTotal: (M.symPkgs || []).length });
+    symbolDefsTotal: (M.symPkgs || []).length, unitScale: M._us });
   DBG.log('sheet largest parts (pin data):', largest);
 }
 function renderScene() {
