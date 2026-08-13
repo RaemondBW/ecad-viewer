@@ -425,11 +425,11 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
     const vert = (f.orient === 'u' || f.orient === 'd');
     const sideLabel = () => {
       if (!f.net) return '';
-      const lp = P(-4 * US, -5 * US);
+      const lp = P(-US * 0.5, -US * 0.6);
       const lx = lp[0].toFixed(1), ly = lp[1].toFixed(1);
       const anc = vert ? (f.orient === 'd' ? 'start' : 'end') : (f.orient === 'l' ? 'start' : 'end');
       const rot = vert ? ` transform="rotate(-90 ${lx} ${ly})"` : '';
-      return `<text class="flabel" x="${lx}" y="${ly}" font-size="${(12 * US).toFixed(1)}" text-anchor="${anc}" dominant-baseline="central"${rot}>${esc(f.net)}</text>`;
+      return `<text class="flabel" x="${lx}" y="${ly}" font-size="${(US * 1.05).toFixed(1)}" text-anchor="${anc}" dominant-baseline="central"${rot}>${esc(f.net)}</text>`;
     };
     let g = `<g class="flagg"${nk}>`;
     if (f.kind === 'gnd') {
@@ -526,28 +526,30 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
   // baseline (a median passive box of ~32). Used to size standalone net/flag labels
   // (which have no local part geometry to scale from) so they don't go tiny on a
   // finely-scaled sheet. Part/passive fonts scale from their own box/pin-span instead.
+  // Target font size for standalone net/flag labels: the median PIN-LABEL size of the
+  // board's multi-pin ICs (≥6 pins). Net labels have no local geometry of their own, so
+  // we size them to the same scale as the real ICs' pin labels — the thing the eye
+  // compares them against. This is an ABSOLUTE size (not a multiplier); using a scale
+  // factor kept getting polluted by tiny/fine-pitch parts and coincident-pin noise, so
+  // net labels came out many times smaller than the big ICs' pin labels.
   function computeUS(model) {
-    // Scale for the standalone net/flag labels, derived from the board's PIN PITCH (the
-    // coordinate grid) so it tracks the pin-label size — which is also pitch-driven —
-    // on any board. Median part-box was wrong here: a board of small passives + big ICs
-    // gives a small median (→ tiny net labels) while pin labels scale with each IC's own
-    // large geometry, so net labels ended up several times smaller than pin labels.
-    const pitches = [];
+    const big = [], any = [];
     for (const sh of (model.sheets || [])) for (const p of sh.parts) {
       if (!p.box || p.pins.length < 3) continue;
-      let mn = Infinity; const n = Math.min(p.pins.length, 16);
+      let mn = Infinity; const n = Math.min(p.pins.length, 20);
       for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
         const dd = Math.hypot(p.pins[i][0] - p.pins[j][0], p.pins[i][1] - p.pins[j][1]);
         if (dd > 1 && dd < mn) mn = dd;
       }
-      if (isFinite(mn)) pitches.push(mn);
+      if (!isFinite(mn)) continue;
+      const s = Math.min(Math.min(p.box[2], p.box[3]) * 0.09, mn * 0.5);   // that part's pin-label font
+      any.push(s);
+      if (p.pins.length >= 6) big.push(s);
     }
-    if (!pitches.length) return 1;
-    pitches.sort((a, b) => a - b);
-    // 75th percentile (not median): a board of many tiny passives + a few big ICs has a
-    // small median, but net labels should read at the scale of the bigger parts the eye
-    // compares them to. 20 = HSD-scale pin pitch.
-    return Math.max(0.5, pitches[Math.floor(pitches.length * 0.75)] / 20);
+    const pick = big.length ? big : any;
+    if (!pick.length) return 12;
+    pick.sort((a, b) => a - b);
+    return Math.max(7, pick[pick.length >> 1]);
   }
   function sceneSVG(s, model, dctx) {
     dctx = dctx || {};
@@ -660,7 +662,7 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
     for (const f of s.connectors || []) h += flagSVG(f, fc, US);
     for (const j of s.junctions || []) h += `<circle class="junction" cx="${j[0]}" cy="${j[1]}" r="1.6"/>`;
     for (const l of s.labels) {
-      h += `<text class="nlabel" data-net="${esc(l.key)}" x="${l.x}" y="${(l.y - 4 * US).toFixed(1)}" font-size="${(14 * US).toFixed(1)}">${esc(l.text)}</text>`;
+      h += `<text class="nlabel" data-net="${esc(l.key)}" x="${l.x}" y="${(l.y - US * 0.4).toFixed(1)}" font-size="${(US * 1.2).toFixed(1)}">${esc(l.text)}</text>`;
     }
     h += titleblockSVG(s.tb, model.titleblock);
     return h;
