@@ -533,23 +533,17 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
   // factor kept getting polluted by tiny/fine-pitch parts and coincident-pin noise, so
   // net labels came out many times smaller than the big ICs' pin labels.
   function computeUS(model) {
-    const big = [], any = [];
+    // Multi-pin parts' box short-side × 0.09 (the pin-label formula, but from the box,
+    // which is stable — pin PITCH gets polluted by close pins and coincident-pin noise),
+    // 80th percentile so net/flag labels read at the scale of the bigger ICs the eye
+    // compares them against rather than the many tiny parts.
+    const sizes = [];
     for (const sh of (model.sheets || [])) for (const p of sh.parts) {
-      if (!p.box || p.pins.length < 3) continue;
-      let mn = Infinity; const n = Math.min(p.pins.length, 20);
-      for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
-        const dd = Math.hypot(p.pins[i][0] - p.pins[j][0], p.pins[i][1] - p.pins[j][1]);
-        if (dd > 1 && dd < mn) mn = dd;
-      }
-      if (!isFinite(mn)) continue;
-      const s = Math.min(Math.min(p.box[2], p.box[3]) * 0.09, mn * 0.5);   // that part's pin-label font
-      any.push(s);
-      if (p.pins.length >= 6) big.push(s);
+      if (p.box && p.pins.length >= 4) sizes.push(Math.min(p.box[2], p.box[3]) * 0.09);
     }
-    const pick = big.length ? big : any;
-    if (!pick.length) return 12;
-    pick.sort((a, b) => a - b);
-    return Math.max(7, pick[pick.length >> 1]);
+    if (!sizes.length) return 10;
+    sizes.sort((a, b) => a - b);
+    return Math.max(7, sizes[Math.floor(sizes.length * 0.8)]);
   }
   function sceneSVG(s, model, dctx) {
     dctx = dctx || {};
