@@ -553,7 +553,10 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
     }
     if (!sizes.length) return 10;
     sizes.sort((a, b) => a - b);
-    return Math.max(7, sizes[sizes.length >> 1]);
+    // 85th percentile, not median: the eye compares net labels against the BIGGER ICs'
+    // pin labels, and the median gets dragged down by fine-pitch parts. Still uses the
+    // real pin-label formula (pitch-capped), so it can't exceed what parts render at.
+    return Math.max(7, sizes[Math.floor(sizes.length * 0.85)]);
   }
   function sceneSVG(s, model, dctx) {
     dctx = dctx || {};
