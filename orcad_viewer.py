@@ -432,14 +432,19 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
       return `<text class="flabel" x="${lx}" y="${ly}" font-size="${(US * 1.05).toFixed(1)}" text-anchor="${anc}" dominant-baseline="central"${rot}>${esc(f.net)}</text>`;
     };
     let g = `<g class="flagg"${nk}>`;
+    // All flag geometry/text scales with US (the board's IC label scale) — the
+    // constants below were tuned at US≈10, so gs normalizes them. fs is the
+    // off-page/port label font: THE most common net label on a multi-sheet board
+    // (it was hardcoded 8, which is unreadably small on a finely-scaled board).
+    const gs = Math.max(1, US / 10);
     if (f.kind === 'gnd') {
-      g += L(P(0, 0), P(4, 0)) + L(P(4, -5), P(4, 5)) + L(P(7, -3), P(7, 3)) + L(P(10, -1.5), P(10, 1.5));
+      g += L(P(0, 0), P(4 * gs, 0)) + L(P(4 * gs, -5 * gs), P(4 * gs, 5 * gs)) + L(P(7 * gs, -3 * gs), P(7 * gs, 3 * gs)) + L(P(10 * gs, -1.5 * gs), P(10 * gs, 1.5 * gs));
       g += sideLabel();
     } else if (f.kind === 'pwr') {
-      g += L(P(0, -5), P(0, 5));
+      g += L(P(0, -5 * gs), P(0, 5 * gs));
       g += sideLabel();
     } else {
-      const name = f.net || '', fs = 8;
+      const name = f.net || '', fs = Math.max(8, US * 1.05);
       const toCenter = ctr ? (ux * (ctr[0] - x) + uy * (ctr[1] - y)) > 0 : (f.orient === 'd' || f.orient === 'r');
       const labelOnly = !toCenter;
       if (labelOnly) {
