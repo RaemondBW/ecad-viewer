@@ -429,7 +429,7 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
       const lx = lp[0].toFixed(1), ly = lp[1].toFixed(1);
       const anc = vert ? (f.orient === 'd' ? 'start' : 'end') : (f.orient === 'l' ? 'start' : 'end');
       const rot = vert ? ` transform="rotate(-90 ${lx} ${ly})"` : '';
-      return `<text class="flabel" x="${lx}" y="${ly}" font-size="${(US * 1.05).toFixed(1)}" text-anchor="${anc}" dominant-baseline="central"${rot}>${esc(f.net)}</text>`;
+      return `<text class="flabel" x="${lx}" y="${ly}" font-size="${US.toFixed(1)}" text-anchor="${anc}" dominant-baseline="central"${rot}>${esc(f.net)}</text>`;
     };
     let g = `<g class="flagg"${nk}>`;
     // All flag geometry/text scales with US (the board's IC label scale) — the
@@ -444,7 +444,7 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
       g += L(P(0, -5 * gs), P(0, 5 * gs));
       g += sideLabel();
     } else {
-      const name = f.net || '', fs = Math.max(8, US * 1.05);
+      const name = f.net || '', fs = Math.max(8, US);
       const toCenter = ctr ? (ux * (ctr[0] - x) + uy * (ctr[1] - y)) > 0 : (f.orient === 'd' || f.orient === 'r');
       const labelOnly = !toCenter;
       if (labelOnly) {
@@ -538,17 +538,22 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
   // factor kept getting polluted by tiny/fine-pitch parts and coincident-pin noise, so
   // net labels came out many times smaller than the big ICs' pin labels.
   function computeUS(model) {
-    // Multi-pin parts' box short-side × 0.09 (the pin-label formula, but from the box,
-    // which is stable — pin PITCH gets polluted by close pins and coincident-pin noise),
-    // 80th percentile so net/flag labels read at the scale of the bigger ICs the eye
-    // compares them against rather than the many tiny parts.
+    // The SAME formula the pin labels use — min(box-short-side × 0.09, pitch × 0.5) per
+    // part — median across the multi-pin ICs (≥6 pins). Net/flag labels then render at
+    // exactly the pin-label size the eye compares them against.
     const sizes = [];
     for (const sh of (model.sheets || [])) for (const p of sh.parts) {
-      if (p.box && p.pins.length >= 4) sizes.push(Math.min(p.box[2], p.box[3]) * 0.09);
+      if (!p.box || p.pins.length < 6) continue;
+      let mn = Infinity; const n = Math.min(p.pins.length, 24);
+      for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+        const dd = Math.hypot(p.pins[i][0] - p.pins[j][0], p.pins[i][1] - p.pins[j][1]);
+        if (dd > 1 && dd < mn) mn = dd;
+      }
+      sizes.push(Math.max(4, Math.min(Math.min(p.box[2], p.box[3]) * 0.09, isFinite(mn) ? mn * 0.5 : 1e9)));
     }
     if (!sizes.length) return 10;
     sizes.sort((a, b) => a - b);
-    return Math.max(7, sizes[Math.floor(sizes.length * 0.8)]);
+    return Math.max(7, sizes[sizes.length >> 1]);
   }
   function sceneSVG(s, model, dctx) {
     dctx = dctx || {};
@@ -635,7 +640,7 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
           // Left/right-align each pin label to the box edge on the pin's side (by which
           // half of the box the pin sits in), so the names line up along the left and
           // right edges like a real IC. Small inset so the text just clears the border.
-          const m = pnf * 0.55;
+          const m = pnf * 0.3;   // flush: labels line up just inside the part edge
           let tx, nameY = py, anchor;
           if (px < bx + bw / 2) { tx = bx + m; anchor = 'start'; }
           else { tx = bx + bw - m; anchor = 'end'; }
@@ -661,7 +666,7 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
     for (const f of s.connectors || []) h += flagSVG(f, fc, US);
     for (const j of s.junctions || []) h += `<circle class="junction" cx="${j[0]}" cy="${j[1]}" r="1.6"/>`;
     for (const l of s.labels) {
-      h += `<text class="nlabel" data-net="${esc(l.key)}" x="${l.x}" y="${(l.y - US * 0.4).toFixed(1)}" font-size="${(US * 1.2).toFixed(1)}">${esc(l.text)}</text>`;
+      h += `<text class="nlabel" data-net="${esc(l.key)}" x="${l.x}" y="${(l.y - US * 0.4).toFixed(1)}" font-size="${US.toFixed(1)}">${esc(l.text)}</text>`;
     }
     h += titleblockSVG(s.tb, model.titleblock);
     return h;
