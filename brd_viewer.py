@@ -97,9 +97,34 @@ def build(brd_path, bom_path=None):
     d = Path(brd_path).read_bytes()
     hdr = bc.parse_header(d)              # magic + version string, for format diagnostics
     strings = bc.parse_strings(d)
-    placements = bc.component_placements(d, strings)
     bom = oc.parse_bom(bom_path) if bom_path and Path(bom_path).exists() else {}
     graph = bo.parse_graph(d, strings)   # validated nets / pours / outline (brd_objects)
+    # Unit scale: most .brd files store 0.1-mil units (coords ~100k), but some are
+    # saved in mils (coords ~100s-1000s). Every absolute threshold downstream assumes
+    # 0.1-mil, so detect a mils-scale board from its validated ETCH copper and
+    # normalize ALL coordinates ×100 as they are read.
+    UM = 1
+    _mags = []
+    for _key, (_off, _pk) in graph["segsL"].items():
+        _tr = graph["tracks"].get(_pk)
+        if _tr and _tr[0] == bo.ETCH:
+            _w, _sx, _sy, _ex, _ey = bo.seg_line(d, _off)
+            if 0 < max(abs(_sx), abs(_sy), abs(_ex), abs(_ey)) < 3_000_000:
+                _mags.append(max(abs(_sx), abs(_sy), abs(_ex), abs(_ey)))
+    if _mags:
+        _mags.sort()
+        if _mags[len(_mags) // 2] < 3500:
+            UM = 100
+    placements = bc.component_placements(d, strings, scale=UM)
+    # normalize the graph in place so ALL downstream consumption sees 0.1-mil units
+    _seg = (lambda off: tuple(v * UM for v in bo.seg_line(d, off))) if UM != 1 else (lambda off: bo.seg_line(d, off))
+    _pts = (lambda pts: [(x * UM, y * UM) for (x, y) in pts]) if UM != 1 else (lambda pts: pts)
+    if UM != 1:
+        graph["pads"] = [(k, x1 * UM, y1 * UM, x2 * UM, y2 * UM, net, fp, sub, lay)
+                         for (k, x1, y1, x2, y2, net, fp, sub, lay) in graph["pads"]]
+        graph["vias"] = [(x * UM, y * UM, net) for (x, y, net) in graph["vias"]]
+        for s in graph["shapes"]:
+            s["bbox"] = [v * UM for v in s["bbox"]]
     parts, axs, ays = [], [], []
     for ref, (x, y, side, rot, pads) in placements.items():
         pre = re.match(r"^[A-Za-z]+", ref)
@@ -114,6 +139,26 @@ def build(brd_path, bom_path=None):
                       "val": bom.get(ref, ""), "pads": [list(p) for p in pads]})
         for p in (pads or [(x - 8000, y - 8000, x + 8000, y + 8000)]):
             axs += [p[0], p[2]]; ays += [p[1], p[3]]
+    if not axs:
+        # No placements parsed (e.g. a .brd version whose component records we don't
+        # decode). Fall back to the extent of the validated copper/pads/vias so the
+        # board still renders — otherwise the default extent rejects EVERYTHING as
+        # out-of-bounds and the viewer comes up empty.
+        for key, (off, pk) in graph["segsL"].items():
+            tr = graph["tracks"].get(pk)
+            if tr and tr[0] == bo.ETCH:
+                _w, sx, sy, ex, ey = _seg(off)
+                if all(-3_000_000 * UM < v < 3_000_000 * UM for v in (sx, sy, ex, ey)):
+                    axs += [sx, ex]; ays += [sy, ey]
+        for (_k, x1, y1, x2, y2, _net, _fp, _sub, _lay) in graph["pads"]:
+            axs += [x1, x2]; ays += [y1, y2]
+        for (x, y, _net) in graph["vias"]:
+            axs.append(x); ays.append(y)
+        if axs:
+            # robust percentile box — junk endpoints far off-board would blow the extent
+            axs.sort(); ays.sort()
+            q = lambda a, f: a[min(len(a) - 1, int(len(a) * f))]
+            axs = [q(axs, 0.005), q(axs, 0.995)]; ays = [q(ays, 0.005), q(ays, 0.995)]
     ext = [min(axs), min(ays), max(axs), max(ays)] if axs else [0, 0, 1000, 1000]
     mx = max((ext[2] - ext[0]), (ext[3] - ext[1])) * 0.02 + 8000
     bb = (ext[0] - mx, ext[1] - mx, ext[2] + mx, ext[3] + mx)
@@ -136,7 +181,7 @@ def build(brd_path, bom_path=None):
         tr = graph["tracks"].get(pk)
         if not tr or tr[0] != bo.ETCH:
             continue
-        w, sx, sy, ex, ey = bo.seg_line(d, off)
+        w, sx, sy, ex, ey = _seg(off)
         if not (0 < w <= 15000) or (sx, sy) == (ex, ey):
             continue
         if max(abs(ex - sx), abs(ey - sy)) > 300000:
@@ -151,7 +196,7 @@ def build(brd_path, bom_path=None):
     for s in graph["shapes"]:
         if s["cls"] != bo.ETCH:
             continue
-        pts = bo.shape_boundary(d, graph, s)
+        pts = _pts(bo.shape_boundary(d, graph, s))
         if len(pts) < 3:
             continue
         flat = [c for p in pts for c in p]
@@ -165,7 +210,7 @@ def build(brd_path, bom_path=None):
     keepins = [s for s in graph["shapes"] if s["cls"] == bo.KEEPIN]
     if keepins:
         big = max(keepins, key=lambda s: (s["bbox"][2] - s["bbox"][0]) * (s["bbox"][3] - s["bbox"][1]))
-        pts = bo.shape_boundary(d, graph, big)
+        pts = _pts(bo.shape_boundary(d, graph, big))
         if len(pts) >= 3:
             outline = [c for p in pts for c in p]
 

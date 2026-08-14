@@ -120,18 +120,27 @@ _REFDES_OK = "URCLDQJXYTFKPWVAS"
 
 
 def parse_strings(d):
-    """Parse the string table at 0x1200: repeated [u32 id][NUL string][word pad]."""
+    """Parse the string table at 0x1200: repeated [u32 id][NUL string][word pad].
+
+    The walk RESYNCS on junk: a non-printable "string" means we lost phase with
+    the table (15.x files interleave non-string records), and without recovery
+    every later entry — including all refdes — is garbage, which cascades into
+    zero components and an empty viewer. On junk, step one word and retry."""
     strings = {}
     p = 0x1200
     n = len(d)
     while p < n - 4 and p < 3_000_000:
         sid = _u32(d, p)
-        p += 4
-        e = p
+        e = p + 4
         while e < n and d[e] != 0:
             e += 1
-        strings[sid] = d[p:e].decode("latin1", "replace")
-        p = (e + 1 + 3) & ~3
+        s = d[p + 4:e]
+        if len(s) < 256 and all(32 <= b < 127 for b in s):
+            if s:
+                strings.setdefault(sid, s.decode("latin1"))
+            p = (e + 1 + 3) & ~3      # empty strings are valid records — keep phase
+        else:
+            p += 4          # junk / lost phase — resync at the next word
     return strings
 
 
@@ -181,8 +190,12 @@ def _resolve_padstack(d, k2o, pkey):
     return (_SHAPES.get(t, "rect"), w, h, layers)
 
 
-def component_placements(d, strings=None):
+def component_placements(d, strings=None, scale=1):
     """Extract every placed component as {refdes: (x, y, side, rot_mdeg, pads)}.
+
+    scale: unit multiplier applied to every coordinate as it is read (before the
+    plausibility filters). Boards saved in mils (coords ~100s-1000s) pass scale=100
+    to normalize to the 0.1-mil units all the absolute thresholds assume.
 
     Components are 0x2D footprint instances: coordX@+32, coordY@+36, rotation
     (millidegrees)@+28, side(0=top,1=bottom)@+2, instRef@+40 → 0x07 whose
@@ -209,6 +222,7 @@ def component_placements(d, strings=None):
         if not (1 <= key < 300000):
             continue
         cx, cy = struct.unpack_from("<ii", d, k + 32)
+        cx *= scale; cy *= scale
         if cx < 15000 or cy < 15000:              # off-board / origin false positives
             continue
         o7 = idx07.get(_u32(d, k + 40))
@@ -229,6 +243,7 @@ def component_placements(d, strings=None):
         if par not in comps:
             continue
         x1, y1, x2, y2 = struct.unpack_from("<iiii", d, k + 68)
+        x1 *= scale; y1 *= scale; x2 *= scale; y2 *= scale
         px, py = (x1 + x2) / 2, (y1 + y2) / 2
         if not (all(-3_000_000 < v < 3_000_000 for v in (x1, y1, x2, y2)) and px > 12000 and py > 12000):
             continue
@@ -242,6 +257,7 @@ def component_placements(d, strings=None):
             ps = _resolve_padstack(d, k2o, _u32(d, pg[1] + 28))
         if ps and ps[3] > 1:                       # through-hole
             shape, w, h, _ = ps
+            w *= scale; h *= scale
             x1, y1, x2, y2 = int(px - w / 2), int(py - h / 2), int(px + w / 2), int(py + h / 2)
         elif ps:
             shape = ps[0]
