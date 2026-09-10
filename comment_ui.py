@@ -1,9 +1,20 @@
-"""Shared commenting UI for the schematic and layout viewers.
+"""Optional commenting UI for the schematic and layout viewers.
 
-This module no longer holds its own copy of the commenting code. It loads the
-canonical, framework-agnostic library at `../comments/comments.js` (the same
-files the Vector Designer imports) and adapts it for inlining into the viewers'
-single-file HTML:
+The commenting system is a *separate* project (`RaemondBW/canvas-comments`) and
+this module is the only place the viewers touch it. It is **optional**: when the
+library can't be found, `JS` is an inert stand-in (`window.Comments` whose
+methods are no-ops and which hides the comment button), the Firebase bootstrap is
+empty, and the generated HTML is a plain self-contained viewer. Nothing else in
+this repo changes.
+
+The library is looked up, in order, at:
+
+  1. `$CANVAS_COMMENTS_DIR`                   (explicit override)
+  2. `<this dir>/comments/`                   (checkout nested inside this repo)
+  3. `<this dir>/../comments/`                (sibling submodule, as in `bus-mime`)
+
+When found, `comments.js` is adapted for inlining into the viewers' single-file
+HTML:
 
   * `JS`  — the library de-module-ified (its `export`s stripped) and wrapped in
             an IIFE, so it drops into the viewers' classic `<script>` and leaks
@@ -26,11 +37,25 @@ in the schematic and `brd:<name>` in the layout; author persists under
 localStorage `xcomment-author`.
 """
 
+import os
 import re
 from pathlib import Path
 
-# Canonical library lives at repo-root `comments/` (this file is in schematic-viewer/).
-_LIB_DIR = Path(__file__).resolve().parent.parent / "comments"
+_HERE = Path(__file__).resolve().parent
+
+
+def _find_lib_dir():
+    """Directory holding canvas-comments' `comments.js`, or None if unavailable."""
+    env = os.environ.get("CANVAS_COMMENTS_DIR")
+    cands = ([Path(env)] if env else []) + [_HERE / "comments", _HERE.parent / "comments"]
+    for d in cands:
+        if (d / "comments.js").is_file():
+            return d
+    return None
+
+
+_LIB_DIR = _find_lib_dir()
+HAVE_COMMENTS = _LIB_DIR is not None
 
 
 def _demodulify_iife(filename, default_export):
@@ -44,12 +69,29 @@ def _demodulify_iife(filename, default_export):
     return "(function(){\n" + src + "\n})();"
 
 
-# window.Comments (overlay) + window.Account (chip) + window.createDocuments (store)
-# + window.Share (Google-Docs share dialog).
-JS = (_demodulify_iife("comments.js", "createComments") + "\n"
-      + _demodulify_iife("account.js", "createAccount") + "\n"
-      + _demodulify_iife("documents.js", "createDocuments") + "\n"
-      + _demodulify_iife("share.js", "createShare"))
+# Inert stand-in used when the library isn't available: same surface the viewers
+# call (see comments.js `init()`'s return value), every method a no-op. `init`
+# hides the toolbar comment button so the UI doesn't advertise a dead feature.
+_STUB_JS = """(function(){
+  // canvas-comments not bundled: inert window.Comments so the viewer's calls are no-ops.
+  const noop = function(){};
+  window.Comments = {
+    init: function(o){ if (o && o.button) o.button.style.display = 'none'; },
+    isPlacing: function(){ return false; }, place: noop, reproject: noop, toggle: noop,
+    countFor: function(){ return 0; }, watchCounts: noop, setContext: noop,
+    setStore: noop, setBackend: noop
+  };
+})();"""
+
+if HAVE_COMMENTS:
+    # window.Comments (overlay) + window.Account (chip) + window.createDocuments (store)
+    # + window.Share (Google-Docs share dialog).
+    JS = (_demodulify_iife("comments.js", "createComments") + "\n"
+          + _demodulify_iife("account.js", "createAccount") + "\n"
+          + _demodulify_iife("documents.js", "createDocuments") + "\n"
+          + _demodulify_iife("share.js", "createShare"))
+else:
+    JS = _STUB_JS
 CSS = ""   # styles are auto-injected by the libraries at init(); see comments/*.css
 
 
@@ -105,6 +147,8 @@ def _firebase_src():
 def firebase_bootstrap(app_id):
     """Embedded-mode bootstrap: the model is already in the page. CDN-loads Firebase,
     attaches the backend to window.Comments, mounts the account chip. Skips ?modal=1."""
+    if not HAVE_COMMENTS:
+        return ""
     cfg = json.dumps({**BACKEND, "appId": app_id, "authMode": "popup"})
     boot = (
         "\ntry {\n"
@@ -128,6 +172,9 @@ def shell_bootstrap(app_id, view):
     the design data is never served in the HTML. `view` is 'schematic' or 'layout'.
     In ?modal=1 (cross-probe preview) it renders silently on the shared session,
     skipping the gate and comment/account chrome."""
+    if not HAVE_COMMENTS:
+        raise RuntimeError("shell mode needs the canvas-comments library (set CANVAS_COMMENTS_DIR "
+                           "or check it out at ./comments or ../comments)")
     cfg = json.dumps({**BACKEND, "appId": app_id, "authMode": "popup"})
     boot = (
         "\n(function () {\n"
