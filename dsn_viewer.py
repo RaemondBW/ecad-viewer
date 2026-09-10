@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-orcad_viewer.py — Generate a self-contained schematic web view from an OrCAD
-Capture .DSN, rendered from the design's *native* geometry (real part positions
+dsn_viewer.py — Generate a self-contained schematic web view from a
+.DSN design, rendered from the design's *native* geometry (real part positions
 and wire routing parsed directly from the binary), not an auto-layout.
 
-    python schematic-viewer/orcad_viewer.py design.DSN [-o out.html] [--diff old.DSN]
+    python dsn_viewer.py design.DSN [-o out.html] [--diff old.DSN]
 
 With --diff, two .DSN versions are compared and the changes are overlaid on the
 new design's geometry (added / removed / changed parts and nets).
@@ -17,7 +17,7 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent
 sys.path.insert(0, str(SCRIPT_DIR))
-import orcad_convert as oc  # noqa: E402
+import dsn_convert as oc  # noqa: E402
 import comment_ui           # noqa: E402
 
 
@@ -67,7 +67,7 @@ def build_model(dsn_path, diff_path=None):
     design = oc.load_dsn(dsn_path)
     model = oc.build_sheets(design)
     model["name"] = Path(dsn_path).stem
-    # Per-designator values come from a sibling OrCAD BOM export (the schematic
+    # Per-designator values come from a sibling BOM text export (the schematic
     # streams don't carry them). Attach val to each part when present.
     bom = {}
     for ext in (".BOM", ".bom", ".Bom"):
@@ -133,7 +133,7 @@ def _attach_diff(model, old_design, new_design, old_name):
 def generate(dsn_path, out_path, diff_path=None, xprobe=None, shell=False, model=None, offline=False):
     # shell=True emits a data-free viewer that fetches the model after sign-in (hosted,
     # private). shell=False bakes the model in via /*__BOOT__*/ (standalone file).
-    # `model` lets callers pass a pre-built model (e.g. from a non-OrCAD parser).
+    # `model` lets callers pass a pre-built model (e.g. from a non-DSN parser).
     # offline=True (embedded only): drop the Firebase/comments backend bootstrap and
     # the web-font links so the file references NOTHING on the network — pure, fully
     # self-contained viewer + cross-probe. (Comments/sign-in are omitted.)
@@ -1424,7 +1424,7 @@ function renderInspector() {
   const ins = $('inspector');
   if (selNet) return renderNetCard();
   if (!selDes) { ins.style.display = 'none'; return; }
-  // A physical DEVICE is often drawn as several schematic sections (OrCAD
+  // A physical DEVICE is often drawn as several schematic sections (EDA
   // multi-section parts: gates, resistor arrays, power sections) sharing one
   // refdes. Aggregate every section so the card shows the whole device.
   const secs = [];
@@ -1560,7 +1560,7 @@ function bindToolbar() {
 }
 
 // Model-level diff between two stored revisions — the client-side counterpart of
-// orcad_convert.compute_diff. Components are keyed by refdes. Named nets compare by
+// dsn_convert.compute_diff. Components are keyed by refdes. Named nets compare by
 // name. Anonymous N$… keys embed per-save object ids (renumbered on every save), so
 // they are matched STRUCTURALLY instead: a net's identity is its endpoint set
 // (REF.PIN list); old and new anonymous nets pair by best endpoint overlap. A net
@@ -1706,7 +1706,7 @@ window.__renderModel = function (model, xprobe, oldModel) {
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("dsn", type=Path, help="OrCAD Capture .DSN")
+    ap.add_argument("dsn", type=Path, help=".DSN")
     ap.add_argument("-o", "--output", type=Path, default=None)
     ap.add_argument("--diff", type=Path, default=None,
                     help="an older .DSN to diff against")

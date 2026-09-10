@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-orcad_convert.py — Convert an OrCAD Capture .DSN design to the schematic-viewer
+dsn_convert.py — Convert an .DSN design to the schematic-viewer
 pinout format (the same pinout/*.json that generate.py consumes).
 
 The .DSN is a Microsoft Compound File (OLE2) whose schematic pages are stored in
-Cadence's proprietary binary structure format. This module reconstructs
-connectivity directly from those binary streams — no OrCAD/Cadence tools needed.
+the vendor's proprietary binary structure format. This module reconstructs
+connectivity directly from those binary streams — no vendor tools needed.
 
-Approach (validated empirically against Werni2A/OpenOrCadParser's reversing):
+Approach (validated empirically against open-source reversing of the format):
   * Each schematic page (Views/<view>/Pages/<page>) is a sequence of "structure"
     records. We locate the records we need by their distinctive binary
     signatures rather than by strict sequential parsing (which is
@@ -23,7 +23,7 @@ Approach (validated empirically against Werni2A/OpenOrCadParser's reversing):
     connectivity); unnamed nets remain page-local and get synthetic names.
 
 Usage:
-    python schematic-viewer/orcad_convert.py design.DSN [--out OUTPUT_DIR]
+    python dsn_convert.py design.DSN [--out OUTPUT_DIR]
         [--view] [--no-download]
 
 If OUTPUT_DIR is omitted, a directory named <design>_viewer/ is created next to
@@ -294,7 +294,7 @@ def load_dsn(path):
 
 
 def parse_bom(path):
-    """Parse an OrCAD 'Bill Of Materials' text export into {designator: value}.
+    """Parse an 'Bill Of Materials' text export into {designator: value}.
     Columns are tab-separated (Item, Quantity, Reference, Part); the Reference
     list wraps onto indented continuation lines, with Part on the item's first
     line. This is the only place the design records a value per reference
@@ -449,14 +449,14 @@ def build_sheets(design):
         out_wires.extend(_bus_stub_links(flags, out_wires))
 
         # Net-name labels on wires — but not where a flag already carries the
-        # name (the flag is the port label, as in OrCAD).
+        # name (the flag is the port label, as in the original tool).
         labels = [{"x": p[0], "y": p[1], "text": names_text, "key": key}
                   for key, p in label_seen.items()
                   for names_text in (net_used.get(key, ""),)
                   if names_text and key not in flag_keys]
 
         # Junction dots: a point where three or more wire ends meet (a real
-        # electrical tie, as OrCAD draws with a solid dot).
+        # electrical tie, drawn with a solid dot).
         from collections import Counter as _C
         endc = _C()
         for _n, x1, y1, x2, y2 in wires:
@@ -522,7 +522,7 @@ def build_sheets(design):
             "title": title, "sheet_name": s["page"] or s["view"],
             "heading": heading,
             "size": size, "rev": "", "date": "",
-            "n": i + 1, "total": total, "company": "Cadence",
+            "n": i + 1, "total": total, "company": "",
         }
 
     # Packages that have a cached symbol definition (source of pin NAMES). If a box
@@ -816,7 +816,7 @@ _PORT_DIR = {"PORTRIGHT": "out", "PORTLEFT": "in", "PORTBOTH": "bi",
 
 
 def _port_directions(data, flags):
-    """Recover in/out direction for connectors that carry an explicit OrCAD port
+    """Recover in/out direction for connectors that carry an explicit port
     symbol. The placement record stores the symbol's insertion point (i16 x,y at
     name-end + 6), which sits at a fixed per-symbol offset from the electrical
     pin. We self-calibrate that offset by finding the single (dx,dy) that lands
@@ -854,7 +854,7 @@ _BUS_RE = re.compile(r"\[\d+\.\.\d+\]")
 
 
 def _bus_stub_links(flags, out_wires):
-    """Join each off-page stub's outer end to the bus it taps. OrCAD hides this
+    """Join each off-page stub's outer end to the bus it taps. The schematic tool hides this
     behind a bus-entry symbol we don't parse, leaving a ~10-mil gap between the
     dangling signal end and the perimeter bus ring. For every port flag we cast a
     ray outward along its orientation; if it reaches a bus wire (net name with a
@@ -897,7 +897,7 @@ def _bus_stub_links(flags, out_wires):
 
 
 def _dangling_flags(wires, pins, point_nets, names, pageid):
-    """OrCAD attaches a power/ground/off-page connector at every dangling wire
+    """The schematic tool attaches a power/ground/off-page connector at every dangling wire
     end (a degree-1 endpoint that isn't a component pin). We place a glyph there
     directly — an exact wire-touch point with the correct net — classifying the
     glyph by the net name and orienting it outward along the wire. This is far
@@ -947,7 +947,7 @@ def _part_box(pins):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("dsn", type=Path, help="OrCAD Capture .DSN file")
+    ap.add_argument("dsn", type=Path, help=".DSN file")
     ap.add_argument("--out", type=Path, default=None, help="output viewer dir")
     ap.add_argument("--summary", action="store_true", help="print a summary and exit")
     args = ap.parse_args()

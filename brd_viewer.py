@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-brd_viewer.py — a placement webview for a Cadence Allegro .brd board.
+brd_viewer.py — a placement webview for a .brd board.
 
 Renders every component the .brd parser can place (brd_convert.component_placements)
 as a marker at its board XY, coloured by type, with the value from a sibling
-OrCAD BOM export shown on hover. This is a first PCB view: placements only
+BOM text export shown on hover. This is a first PCB view: placements only
 (no footprint outlines / copper / board outline yet — those need more of the
-Allegro geometry decoded).
+board geometry decoded).
 
     python schematic-viewer/brd_viewer.py board.brd [-o out.html] [--bom design.BOM]
 """
@@ -21,7 +21,7 @@ SCRIPT_DIR = Path(__file__).parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import brd_convert as bc          # noqa: E402
 import brd_objects as bo          # noqa: E402
-import orcad_convert as oc        # noqa: E402
+import dsn_convert as oc        # noqa: E402
 import comment_ui                 # noqa: E402
 
 # marker colour + half-size (board units) per reference-designator prefix
@@ -954,7 +954,7 @@ def main():
     ap.add_argument("brd", type=Path)
     ap.add_argument("-o", "--output", type=Path, default=None)
     ap.add_argument("--bom", type=Path, default=None,
-                    help="OrCAD BOM export for values (default: sibling <stem>.BOM)")
+                    help="BOM text export for values (default: sibling <stem>.BOM)")
     ap.add_argument("--offline", action="store_true",
                     help="fully self-contained file: no web fonts, no comments backend")
     args = ap.parse_args()

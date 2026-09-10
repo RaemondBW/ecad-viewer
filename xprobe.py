@@ -1,4 +1,4 @@
-"""Cross-probe correspondence between an OrCAD .DSN schematic and an Allegro .brd
+"""Cross-probe correspondence between an .DSN schematic and an .brd
 layout of the same board. Produces a canonical net table linking each schematic
 net to a layout geometric net (and a representative layout coordinate), so the
 two viewers can highlight the same net in both directions.
@@ -6,13 +6,13 @@ two viewers can highlight the same net in both directions.
 Matching: (1) exact net-name match via the .brd 0x04->0x1b net records, then
 (2) fuzzy match of the remaining nets by the set of component refdes each net
 touches (Jaccard), which covers auto-named N$ signal nets that don't share a
-name between Capture and Allegro.
+name between the schematic and layout tools.
 """
 import struct
 from pathlib import Path
 
 import brd_convert as bc
-import orcad_viewer as ov
+import dsn_viewer as ov
 
 _SEGT = (0x15, 0x16, 0x17)
 
@@ -139,7 +139,7 @@ def _schematic_nets(dsn_path):
 
 def build_from_models(sch_model, lay_model):
     """Cross-probe correspondence from pre-built schematic + layout models
-    (parser-agnostic; used for KiCad and any non-OrCAD source). Same matching as
+    (parser-agnostic; used for KiCad and any non-DSN source). Same matching as
     build_correspondence: exact net-name, then refdes-set Jaccard for the rest."""
     return _match(_schematic_nets_from_model(sch_model), _layout_nets(None, lay_model))
 
@@ -197,12 +197,12 @@ def _match(sch, lay):
 
 
 def generate_linked(dsn_path, brd_path, out_dir, bom_path=None,
-                    sch_name="orcad_schematic.html", pcb_name="pcb.html", offline=False):
+                    sch_name="schematic.html", pcb_name="pcb.html", offline=False):
     """Generate both viewers wired for cross-probing. The layout model is built
     once and shared with the correspondence so the embedded xnet coordinates
     match the rendered geometry exactly. offline=True makes both files fully
     self-contained (no network / backend); see generate(offline=…)."""
-    import brd_viewer, orcad_viewer
+    import brd_viewer, dsn_viewer
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     model = brd_viewer.build(brd_path, bom_path)
@@ -214,7 +214,7 @@ def generate_linked(dsn_path, brd_path, out_dir, bom_path=None,
               f"({len(model.get('parts', []))} parts placed).")
         print(f"    .brd format: magic=0x{fmt.get('magic', 0):08x} "
               f"version={fmt.get('version', '')!r}")
-        print(f"    the copper parser targets Allegro 16.x (magic 0x00160100, 'allv16'); "
+        print(f"    the copper parser targets 16.x (magic 0x00160100, 'allv16'); "
               f"a newer format (17.x) uses different block layouts and isn't parsed yet. "
               f"Generating viewers WITHOUT cross-probe.")
     xnets, ns, nl = build_correspondence(dsn_path, brd_path, model)
@@ -226,7 +226,7 @@ def generate_linked(dsn_path, brd_path, out_dir, bom_path=None,
     brd_viewer.generate(brd_path, out / pcb_name, bom_path,
                         xprobe={"xnets": payload, "companion": sch_name, "standalone": True},
                         model=model, offline=offline)
-    orcad_viewer.generate(dsn_path, out / sch_name,
+    dsn_viewer.generate(dsn_path, out / sch_name,
                           xprobe={"xnets": payload, "companion": pcb_name, "layoutRefs": lay_refs,
                                   "standalone": True}, offline=offline)
     ex = sum(1 for x in xnets if x["exact"])

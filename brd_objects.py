@@ -1,4 +1,4 @@
-"""Validated Allegro .brd object graph (A_172-family layouts).
+"""Validated .brd object graph (A_172-family layouts).
 
 brd_convert.py's heuristic scans identify blocks by a lone type byte, which is
 reliable only when a strong structural filter follows (as for ETCH copper). This
@@ -36,7 +36,7 @@ _SANE = 3_000_000
 
 
 def _cfp(d, k):
-    """Cadence 8-byte float: the two 32-bit words are swapped vs IEEE double."""
+    """Swapped-word 8-byte float: the two 32-bit words are swapped vs IEEE double."""
     lo, hi = struct.unpack_from("<II", d, k)
     return struct.unpack("<d", struct.pack("<II", hi, lo))[0]
 

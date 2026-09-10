@@ -1,15 +1,15 @@
-# Cadence Allegro `.brd` Board Format
+# `.brd` Board Format
 
 A complete reference for writing an interpreter that recovers **nets, copper
 (tracks + pours), vias, pads, component placements, and the board outline** from
-a Cadence Allegro `.brd` layout, with **no Cadence tools required**.
+a `.brd` layout, with **no vendor tools required**.
 
 > **Status / provenance.** The `.brd` format is proprietary, binary, and
-> undocumented by Cadence. This reference was reverse-engineered and validated
-> empirically against real boards (Allegro **16.x / ≥ V172**, "A_172" family),
+> undocumented by the vendor. This reference was reverse-engineered and validated
+> empirically against real boards (**16.x / ≥ V172**, "A_172" family),
 > cross-checked with the block layouts from
 > [bernayigit/brd_parser](https://github.com/bernayigit/brd_parser) (`types.h`)
-> and BoardRipper's `ALLEGRO_BRD_FORMAT.md`. Offsets are for the A_172 layout;
+> and the KiCad importer. Offsets are for the A_172 layout;
 > other versions shift some fields (notably padstack internals). **Identify blocks
 > by signature + cross-links, not by a strict sequential walk** — the object pool
 > is not cleanly walkable and key collisions between block types are common.
@@ -23,7 +23,7 @@ both.
 
 ## 1. Container & overall shape
 
-Unlike OrCAD's `.DSN`, a `.brd` is **not** an OLE2 file — it's a **flat binary**:
+Unlike the `.DSN`, a `.brd` is **not** an OLE2 file — it's a **flat binary**:
 a fixed header, an object-type count table, a version string, then a large
 **object pool** of variable records. You read the raw file bytes directly.
 
@@ -41,7 +41,7 @@ Two structural anchors make it tractable:
 * Integer coordinates are **raw board units**, `int32`. **1 unit = 0.1 mil**
   (0.0001") → e.g. a 9"×8.6" board spans ~`0..97000`. **Y increases downward.**
   (A screen renderer that wants Y-up should negate Y.)
-* **Cadence 8-byte float** (used for arc center/radius): it's an IEEE-754 double
+* **Swapped-word 8-byte float** (used for arc center/radius): it's an IEEE-754 double
   with its **two 32-bit words swapped**. Decode:
 
   ```
@@ -59,7 +59,7 @@ double above).
 ## 3. Header
 
 ```
-u32[0]   magic            0x00160100 family = Allegro 16.x
+u32[0]   magic            0x00160100 family = 16.x
 u32[8]   file_size        == len(file)         (sanity check)
 u32[24…] object-type count table               (starts at byte 96)
          repeated (u32 index, u32 count) pairs, stopping when `index`
@@ -422,7 +422,7 @@ side, rotation`).
 * **Word-swapped doubles** — floats (arc center/radius) are IEEE doubles with the
   two 32-bit halves swapped. Miss this and every arc is garbage.
 * **Padstack layout is the most version-specific part** (`pk+224`, stride 36,
-  layer count `@+44` are V180). Expect to re-locate these on other Allegro
+  layer count `@+44` are V180). Expect to re-locate these on other format
   versions.
 * **THT vs SMD pads differ:** SMD `bbox@+68` is the real pad; THT `bbox@+68` is
   the keep-out — pull the copper size from the padstack.

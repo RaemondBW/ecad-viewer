@@ -1,21 +1,21 @@
-# OrCAD Capture `.DSN` Schematic Format
+# `.DSN` Schematic Format
 
 A complete reference for writing an interpreter that reconstructs schematic
-**geometry and connectivity** from an OrCAD Capture `.DSN` design, with **no
-Cadence tools required**.
+**geometry and connectivity** from an `.DSN` design, with **no
+vendor tools required**.
 
 > **Status / provenance.** The `.DSN` binary structure format is proprietary and
-> undocumented by Cadence. Everything here was reverse-engineered and validated
+> undocumented by the vendor. Everything here was reverse-engineered and validated
 > empirically against real designs (cross-checked with
-> [Werni2A/OpenOrCadParser](https://github.com/Werni2A/OpenOrCadParser)). Field
-> offsets are stable across the OrCAD 16.x / 17.x era files tested, but treat the
+> open-source reverse-engineering of the format). Field
+> offsets are stable across the 16.x / 17.x era files tested, but treat the
 > format as version-sensitive: **locate records by signature, not by strict
 > sequential parsing.** This is the single most important design decision — the
 > record stream contains variable-length property blocks that a strict walker
 > trips over, so a robust reader scans for the distinctive byte signature of each
 > record type it cares about.
 
-The reference implementation is `orcad_convert.py` in this repo; this document is
+The reference implementation is `dsn_convert.py` in this repo; this document is
 the format spec behind it.
 
 ---
@@ -286,10 +286,10 @@ h`).
 
 ## 10. Derived / cosmetic reconstruction (optional)
 
-These make the render look like OrCAD but aren't required for connectivity:
+These make the render look like the original tool but aren't required for connectivity:
 
 * **Junction dots** — a point where **≥3** wire ends meet is a real electrical
-  tie (OrCAD draws a solid dot).
+  tie (drawn as a solid dot).
 * **Dangling flags** — a **degree-1** wire endpoint that is *not* a component pin
   gets a power/ground/off-page connector glyph. Classify by net name:
   `GND*`/`*GND`/`VSS`/`0V` → ground; `+xxV`/`VCC*`/`VDD*`/`VEE`/`VREF`/… → power
@@ -300,7 +300,7 @@ These make the render look like OrCAD but aren't required for connectivity:
   insertion point at name-end+6). Self-calibrate the fixed per-symbol offset from
   the electrical pin by finding the single `(dx,dy)` that lands the most instances
   on the known flag grid.
-* **Bus-entry stubs** — OrCAD hides bus taps behind a symbol we don't parse,
+* **Bus-entry stubs** — The schematic tool hides bus taps behind a symbol we don't parse,
   leaving a ~10-mil gap. For each off-page port, cast a ray outward; if it reaches
   a **bus** wire (net name matching `\[\d+\.\.\d+\]`) within ~50 mil and aligned,
   emit a connecting segment carrying the signal net.
@@ -310,7 +310,7 @@ These make the render look like OrCAD but aren't required for connectivity:
 ## 11. Bill of Materials (values sidecar)
 
 The schematic streams do **not** carry per-reference **values** — they come from
-a separate OrCAD **BOM text export** (`.BOM`). It's tab-separated with a header
+a separate **BOM text export** (`.BOM`). It's tab-separated with a header
 row starting `Item … Part`; columns are `Item, Quantity, Reference, Part`. The
 Reference list wraps onto indented continuation lines. Parse to
 `{designator: value}` and merge by refdes.

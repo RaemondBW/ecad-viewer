@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-brd_convert.py — a (partial) reader for Cadence Allegro .brd board files.
+brd_convert.py — a (partial) reader for .brd board files.
 
 Status: reverse-engineering in progress. What is decoded and reliable:
 
@@ -9,7 +9,7 @@ Status: reverse-engineering in progress. What is decoded and reliable:
   * The reference-designator string table (refdes -> object id). See
     refdes_ids().
   * The component-instance records: fixed 48-byte (12x u32) rows whose
-    field[0] is the refdes id. Field map (validated against an OrCAD BOM on
+    field[0] is the refdes id. Field map (validated against a BOM on
     HSD_FPGA_final.brd):
         [-1] object id
         [0]  refdes id             (-> refdes string via the string table)
@@ -24,7 +24,7 @@ Status: reverse-engineering in progress. What is decoded and reliable:
     Coordinates are integers (~6k..97k here); the design extent maps to roughly a
     9" x 8.6" board (unit ~ 0.1 mil). component_placements() extracts
     refdes -> (x, y): on HSD_FPGA_final.brd it yields 264 components, ALL of
-    which cross-validate against the OrCAD BOM.
+    which cross-validate against the BOM.
 
 TODO: raise placement coverage past 264/~317 (some records use a variant
 layout), recover rotation/mirror, resolve field[8] -> device name/part number,
@@ -45,7 +45,7 @@ def parse_header(d):
     """Decode the fixed header + object-type count table + version string."""
     u = struct.unpack_from("<32I", d, 0)
     hdr = {
-        "magic": u[0],                 # 0x00160100 family = Allegro 16.x
+        "magic": u[0],                 # 0x00160100 family = 16.x
         "file_size": u[8],             # matches len(d)
         "size_ok": u[8] == len(d),
     }
@@ -342,8 +342,8 @@ def vias(d, bounds=None):
     return out
 
 
-# Block layouts (Allegro 16.x/>=V172, cross-checked against the KiCad importer
-# via BoardRipper's ALLEGRO_BRD_FORMAT.md). Every block: main loop consumes the
+# Block layouts (16.x/>=V172, cross-checked against the KiCad importer).
+# Every block: main loop consumes the
 # 1-byte type tag, then the record follows. All blocks carry `key` at +4.
 #   0x05 TRACK  : layer@+2(class),+3(subclass); firstSegPtr@+56; key@+4
 #   0x15/16/17  : (line seg) next@+8; width@+24; startX@+28,startY@+32,endX@+36,endY@+40
@@ -429,5 +429,4 @@ def summary(path):
 
 
 if __name__ == "__main__":
-    summary(sys.argv[1] if len(sys.argv) > 1
-            else "orcad-pcbdemo/allegro/HSD_FPGA_final.brd")
+    summary(sys.argv[1])
