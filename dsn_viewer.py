@@ -18,7 +18,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import dsn_convert as oc  # noqa: E402
-import comment_ui           # noqa: E402
+import viewer_ext           # noqa: E402
 
 
 def _component_index(design):
@@ -130,27 +130,26 @@ def _attach_diff(model, old_design, new_design, old_name):
     model["removedWires"] = removed_wires
 
 
-def generate(dsn_path, out_path, diff_path=None, xprobe=None, shell=False, model=None, offline=False):
-    # shell=True emits a data-free viewer that fetches the model after sign-in (hosted,
-    # private). shell=False bakes the model in via /*__BOOT__*/ (standalone file).
-    # `model` lets callers pass a pre-built model (e.g. from a non-DSN parser).
-    # offline=True (embedded only): drop the Firebase/comments backend bootstrap and
-    # the web-font links so the file references NOTHING on the network — pure, fully
-    # self-contained viewer + cross-probe. (Comments/sign-in are omitted.)
+def generate(dsn_path, out_path, diff_path=None, xprobe=None, shell=False, model=None,
+             offline=False, ext=None):
+    """Write the schematic viewer HTML.
+
+    shell=True   host-loaded: the page ships with NO model; the host's own script
+                 (passed via `ext`) must call window.__renderModel(model, xprobe[, oldModel]).
+    model        a pre-built model (e.g. from a non-DSN parser) instead of dsn_path.
+    offline=True drop the web-font <link>s so the file makes no network request.
+    ext          host fragments spliced into the page — see viewer_ext.SLOTS.
+    """
     if shell:
-        boot, fb = "", comment_ui.shell_bootstrap("schematic-viewer", "schematic")
+        boot = ""
         model = None
     else:
         if model is None:
             model = build_model(dsn_path, diff_path)
         boot = "window.__renderModel(" + json.dumps(model) + ", " + json.dumps(xprobe) + ");"
-        fb = "" if offline else comment_ui.firebase_bootstrap("schematic-viewer")
-    html = (HTML_TEMPLATE.replace("/*__BOOT__*/", boot)
-                         .replace("/*__CMT_CSS__*/", comment_ui.CSS)
-                         .replace("/*__CMT_JS__*/", comment_ui.JS)
-                         .replace("<!--__CMT_FIREBASE__-->", fb))
+    html = viewer_ext.apply(HTML_TEMPLATE.replace("/*__BOOT__*/", boot), ext)
     if offline:
-        html = comment_ui.strip_webfonts(html)
+        html = viewer_ext.strip_webfonts(html)
     Path(out_path).write_text(html)
     if shell:
         print(f"Wrote {out_path}  (schematic shell, {Path(out_path).stat().st_size // 1024} KB)")
@@ -293,16 +292,11 @@ html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#E9E7E1;
 .sch-mini .mini-part{fill:var(--p-comp);opacity:.35}
 .sch-mini .mini-vp{fill:rgba(234,88,12,0.10);stroke:#EA580C;stroke-width:1.4;vector-effect:non-scaling-stroke;cursor:grab}
 body.xmodal .xtop,body.xmodal #sidebar,body.xmodal #minimap,body.xmodal #inspector{display:none!important}
-body.xmodal #cmt-btn,body.xmodal #cmt-layer{display:none!important}
 body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom/hover/click */
-/*__CMT_CSS__*/
+/*__EXT_CSS__*/
 </style></head>
 <body>
-<div id="shell-gate" style="position:fixed;inset:0;z-index:9999;background:#FBFAF7;display:none;align-items:center;justify-content:center;flex-direction:column;font-family:'IBM Plex Sans',system-ui,sans-serif">
-  <div style="font-size:19px;font-weight:700;color:#221F1A;margin-bottom:6px">PCB Project</div>
-  <div id="shell-gate-msg" style="font-size:14px;color:#8B8578;margin-bottom:20px">Loading&hellip;</div>
-  <button id="shell-gate-btn" style="display:none;align-items:center;gap:8px;height:40px;padding:0 18px;border-radius:10px;border:1px solid #D9D4C6;background:#fff;color:#3A362E;font:600 14px 'IBM Plex Sans',system-ui,sans-serif;cursor:pointer">Sign in with Google</button>
-</div>
+<!--__EXT_BODY__-->
 <div style="position:relative;height:100vh;display:flex;flex-direction:column;overflow:hidden">
   <!-- toolbar -->
   <div class="xtop" style="display:flex;align-items:center;gap:12px;height:54px;padding:0 14px;background:#FBFAF7;border-bottom:1px solid #E0DCD1;flex-shrink:0;z-index:40;position:relative">
@@ -326,7 +320,7 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
     <div id="tb-crumb" style="font-size:10.5px;font-family:'IBM Plex Mono',monospace;color:#8B8578;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
     <div id="tb-diff" style="display:none;align-items:center;gap:6px;font-family:'IBM Plex Mono',monospace;font-size:11px"></div>
     <div style="flex:1"></div>
-    <button id="cmt-btn" class="tbtn icon" title="Add / view comments">&#128172;</button>
+    <!--__EXT_TOOLBAR__-->
     <button id="tb-fit" class="tbtn">Fit</button>
     <div style="display:flex;align-items:center;border:1px solid #D9D4C6;border-radius:8px;background:#FFFFFF;overflow:hidden;flex-shrink:0">
       <button id="tb-zout" class="zbtn">&#8722;</button>
@@ -334,7 +328,6 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
       <button id="tb-zin" class="zbtn">+</button>
     </div>
     <div id="tb-rev" style="display:none;position:relative;flex-shrink:0"></div>
-    <button id="cmt-share" class="tbtn" style="display:none;flex-shrink:0" title="Share this project">Share</button>
     <div style="position:relative;flex-shrink:0">
       <button id="tb-more" class="tbtn icon" title="More">&#8943;</button>
       <div id="tb-more-menu" style="display:none;position:absolute;top:40px;right:0;min-width:184px;background:#fff;border:1px solid #E0DCD1;border-radius:10px;box-shadow:0 14px 32px rgba(24,20,10,.16);padding:5px;z-index:90">
@@ -342,7 +335,7 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
         <button id="tb-bom" class="tbtn-mi">Bill of materials</button>
       </div>
     </div>
-    <div id="cmt-account" style="margin-left:6px;flex-shrink:0"></div>
+    <!--__EXT_TOOLBAR_END__-->
   </div>
   <!-- main -->
   <div style="display:flex;flex:1;min-height:0;position:relative">
@@ -711,8 +704,8 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
 })();
 
 /* ── App ── */
-let M = null;              // in shell mode the model is fetched from the backend after
-let XP = null;             // sign-in; in embedded mode /*__BOOT__*/ calls __renderModel now
+let M = null;              // set by __renderModel: embedded builds call it from /*__BOOT__*/,
+let XP = null;             // host-loaded pages from their own script once the model is fetched
 const DOCID = new URLSearchParams(location.search).get('doc') || '';
 // ---- debug logging -----------------------------------------------------------
 // Tagged, timestamped console output so a user hitting a failure can copy the
@@ -742,7 +735,20 @@ DBG.log('viewer script loaded; doc=' + (DOCID || '(embedded)') + ' url=' + locat
 // Layout URL preserving doc/rev/diff, so cross-probe "Open full" stays on the same
 // revision in the same tab.
 function companionHref(extra){ const u = new URLSearchParams(location.search); ['ref','xnet','xcolor','modal'].forEach(k=>u.delete(k)); for(const k in (extra||{})) u.set(k, extra[k]); return XP.companion + '?' + u.toString(); }
-/*__CMT_JS__*/
+// ---- host integration -----------------------------------------------------------
+// A host page can extend the viewer without editing it. `Viewer.on(event, cb)`:
+// 'ready' (API populated; fires at once if already ready), 'view' (pan/zoom/flip)
+// and 'sheet' (schematic page switch). `Viewer.hooks.busy()` suppresses hover while
+// the host owns the pointer; `Viewer.hooks.claimClick(e)` consumes a click;
+// `Viewer.hooks.sheetBadge(i)` adds HTML to a sheet-list row. After 'ready' it also
+// exposes kind/name/modal/svg/stage, context(), project(x,y) → screen and
+// hitTest(clientX, clientY) → nearest item {kind,x,y,ref,label,tx,ty}.
+const Viewer = window.Viewer = { ready:false, hooks:{}, _l:{},
+  on(ev,cb){ (this._l[ev]=this._l[ev]||[]).push(cb); if(ev==='ready'&&this.ready) cb(this); },
+  emit(ev,d){ for(const f of (this._l[ev]||[])) try{ f(d); }catch(e){ console.error('[viewer] host hook failed:',e); } },
+  busy(){ const h=this.hooks.busy; return !!(h&&h()); },
+  claim(e){ const h=this.hooks.claimClick; return !!(h&&h(e)); } };
+/*__EXT_JS__*/
 const R = window.SchRender, esc = R.esc;
 const $ = id => document.getElementById(id);
 
@@ -797,7 +803,7 @@ function driveFrame(target) {   // target: {ref}|{xnet} with .href, or null to h
   }
 }
 
-let cur = 0, pinNets = [], selDes = null, selPi = null, selNet = null, cardPinned = false, q = '', searchFocus = false, _cmtSheet = -1;
+let cur = 0, pinNets = [], selDes = null, selPi = null, selNet = null, cardPinned = false, q = '', searchFocus = false, _lastSheet = -1;
 let bomOpen = false, bomQ = '', dark = false, collapsed = {}, sheetsOpen = true, ready = false;
 let view = { x: 0, y: 0, k: 1 };
 let baseK = 1;   // the fit-to-whole-sheet scale; the zoom % is shown relative to it (fit = 100%)
@@ -887,39 +893,29 @@ function init() {
   if (_xn !== null) applyXprobe({ xnet: _xn });
   else if (_xr) applyXprobe({ ref: _xr });
   window.addEventListener('message', e => { const d = e.data; if (d && d.type === 'xprobe') applyXprobe(d); });
-  // ---- comments: anchor to a part, a net, or an open point (per sheet) ----
-  if (!XMODAL) {
-    window.__cmtContext = () => 'sch:' + (M.name || '') + ':' + cur;   // shared with the Firebase backend bootstrap
-    Comments.init({
-      context: window.__cmtContext,
-      rev: () => (window.__docMeta || {}).curRev || 1,          // comments are locked to the rev they were made on
-      latestRev: () => (window.__docMeta || {}).rev || 1,       // unversioned (legacy) comments belong to the latest rev
-      diffRev: () => (window.__docMeta || {}).diffRev || null,  // in a diff, show both revs (new / gone)
-      svg: svgEl, stage: $('stage'), button: $('cmt-btn'),
-      onChange: () => renderSidebar(),   // refresh per-sheet comment counts
-      project: (x, y) => ({ sx: x * view.k + view.x, sy: y * view.k + view.y }),
-      resolveAnchor: (cx, cy) => {
-        const r = svgEl.getBoundingClientRect();
-        const sx = (cx - r.left - view.x) / view.k, sy = (cy - r.top - view.y) / view.k;
-        const s = M.sheets[cur], tol = 90 / view.k;
-        let best = null, bd = tol * tol;               // nearest pin / wire to point the indicator at
-        const seg = (ax, ay, bx, by) => { const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy; let t = l2 ? ((sx - ax) * dx + (sy - ay) * dy) / l2 : 0; t = Math.max(0, Math.min(1, t)); const qx = ax + t * dx, qy = ay + t * dy; return [qx, qy, (sx - qx) * (sx - qx) + (sy - qy) * (sy - qy)]; };
-        for (const p of s.parts) {   // nearest by pin, but aim at the component centre
-          const cx = p.box ? p.box[0] + p.box[2] / 2 : (p.pins && p.pins.length ? p.pins.reduce((a, q) => a + q[0], 0) / p.pins.length : 0);
-          const cy = p.box ? p.box[1] + p.box[3] / 2 : (p.pins && p.pins.length ? p.pins.reduce((a, q) => a + q[1], 0) / p.pins.length : 0);
-          for (const pin of (p.pins || [])) { const dx = pin[0] - sx, dy = pin[1] - sy, d = dx * dx + dy * dy; if (d < bd) { bd = d; best = { kind: 'pin', tx: cx, ty: cy, ref: p.des + '.' + pin[3], label: 'Pin ' + p.des + '.' + pin[3] }; } }
-        }
-        for (const w of (s.wires || [])) { const q = seg(w[0], w[1], w[2], w[3]); if (q[2] < bd) { bd = q[2]; best = { kind: 'net', tx: q[0], ty: q[1], ref: w[4], label: 'Net ' + (netName(w[4]) || w[4]) }; } }
-        if (best) return { kind: best.kind, x: sx, y: sy, ref: best.ref, label: best.label, tx: best.tx, ty: best.ty };   // anchor at cursor, point at the item
-        for (const p of s.parts) if (p.box && sx >= p.box[0] && sx <= p.box[0] + p.box[2] && sy >= p.box[1] && sy <= p.box[1] + p.box[3]) return { kind: 'part', x: sx, y: sy, ref: p.des, label: 'Part ' + p.des, tx: p.box[0] + p.box[2] / 2, ty: p.box[1] + p.box[3] / 2 };
-        return { kind: 'point', x: sx, y: sy, label: 'Open space' };
+  // ---- host API: model→screen projection and what's under a screen point ----
+  Object.assign(Viewer, {
+    kind: 'schematic', name: M.name || '', modal: XMODAL, svg: svgEl, stage: $('stage'),
+    context: () => 'sch:' + (M.name || '') + ':' + cur, sheet: () => cur, refreshSidebar: () => renderSidebar(),
+    project: (x, y) => ({ sx: x * view.k + view.x, sy: y * view.k + view.y }),
+    hitTest: (cx, cy) => {
+      const r = svgEl.getBoundingClientRect();
+      const sx = (cx - r.left - view.x) / view.k, sy = (cy - r.top - view.y) / view.k;
+      const s = M.sheets[cur], tol = 90 / view.k;
+      let best = null, bd = tol * tol;               // nearest pin / wire to point the indicator at
+      const seg = (ax, ay, bx, by) => { const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy; let t = l2 ? ((sx - ax) * dx + (sy - ay) * dy) / l2 : 0; t = Math.max(0, Math.min(1, t)); const qx = ax + t * dx, qy = ay + t * dy; return [qx, qy, (sx - qx) * (sx - qx) + (sy - qy) * (sy - qy)]; };
+      for (const p of s.parts) {   // nearest by pin, but aim at the component centre
+        const cx = p.box ? p.box[0] + p.box[2] / 2 : (p.pins && p.pins.length ? p.pins.reduce((a, q) => a + q[0], 0) / p.pins.length : 0);
+        const cy = p.box ? p.box[1] + p.box[3] / 2 : (p.pins && p.pins.length ? p.pins.reduce((a, q) => a + q[1], 0) / p.pins.length : 0);
+        for (const pin of (p.pins || [])) { const dx = pin[0] - sx, dy = pin[1] - sy, d = dx * dx + dy * dy; if (d < bd) { bd = d; best = { kind: 'pin', tx: cx, ty: cy, ref: p.des + '.' + pin[3], label: 'Pin ' + p.des + '.' + pin[3] }; } }
       }
-    });
-    window._cmtReady = true; _cmtSheet = cur;
-    // Doc-wide per-sheet comment counts (rev-aware badges in the sheet list).
-    window.__sheetCounts = window.__sheetCounts || {};
-    if (Comments.watchCounts) Comments.watchCounts('sch:' + (M.name || '') + ':', m => { window.__sheetCounts = m || {}; renderSidebar(); });
-  }
+      for (const w of (s.wires || [])) { const q = seg(w[0], w[1], w[2], w[3]); if (q[2] < bd) { bd = q[2]; best = { kind: 'net', tx: q[0], ty: q[1], ref: w[4], label: 'Net ' + (netName(w[4]) || w[4]) }; } }
+      if (best) return { kind: best.kind, x: sx, y: sy, ref: best.ref, label: best.label, tx: best.tx, ty: best.ty };   // anchor at cursor, point at the item
+      for (const p of s.parts) if (p.box && sx >= p.box[0] && sx <= p.box[0] + p.box[2] && sy >= p.box[1] && sy <= p.box[1] + p.box[3]) return { kind: 'part', x: sx, y: sy, ref: p.des, label: 'Part ' + p.des, tx: p.box[0] + p.box[2] / 2, ty: p.box[1] + p.box[3] / 2 };
+      return { kind: 'point', x: sx, y: sy, label: 'Open space' };
+    }
+  });
+  Viewer.ready = true; Viewer.emit('ready', Viewer);
 }
 
 /* ---------- scene ---------- */
@@ -960,13 +956,13 @@ function renderScene() {
   applyPins();
   updateSelMark();
   renderMini();
-  if (window._cmtReady && _cmtSheet !== cur) { _cmtSheet = cur; Comments.setContext(); }   // per-sheet comments
+  if (_lastSheet !== cur) { _lastSheet = cur; Viewer.emit('sheet', cur); }
 }
 function applyView() {
   sceneEl.setAttribute('transform', `translate(${view.x},${view.y}) scale(${view.k})`);
   $('tb-zoom').textContent = Math.round(view.k / baseK * 100) + '%';   // 100% = whole sheet fits
   updateVp();
-  if (window.Comments) Comments.reproject();
+  Viewer.emit('view');
 }
 function fit() {
   if (!svgEl || !ready) return;
@@ -1034,7 +1030,7 @@ function bindCanvas() {
     if (des !== overDes) {
       if (des) {                       // entered a part
         cancelCardClose();
-        if (des !== selDes && !cardPinned && !XMODAL && !(window.Comments && Comments.isPlacing())) { hoverDes = des; clearTimeout(hoverTimer);
+        if (des !== selDes && !cardPinned && !XMODAL && !Viewer.busy()) { hoverDes = des; clearTimeout(hoverTimer);
           const hpi = c ? +c.dataset.pi : null;
           hoverTimer = setTimeout(() => { if (hoverDes === des && !cardPinned) selectPart(des, hpi); }, 90); }
       } else {                         // left a part onto empty canvas
@@ -1058,7 +1054,7 @@ function bindCanvas() {
   });
   el.addEventListener('click', e => {
     if (suppressClick) { suppressClick = false; return; }
-    if (window.Comments && Comments.isPlacing()) { Comments.place(e.clientX, e.clientY); return; }
+    if (Viewer.claim(e)) return;
     const n = e.target.closest('[data-net]');
     if (n) { const k = n.dataset.net; togglePin(k); if (isPinned(k)) { cardPinned = true; selectNet(k); } else if (selNet === k) closeSel(); return; }
     const c = e.target.closest('.comp[data-des]');
@@ -1321,14 +1317,7 @@ function renderSidebar() {
         const dots = pinNets.filter(p => (netSheets.get(p.key) || new Set()).has(i))
           .map(p => `<span title="${esc(netName(p.key))}" style="width:6px;height:6px;border-radius:50%;background:${p.color};display:inline-block;flex-shrink:0"></span>`).join('');
         const th = thumbs[i] ? `background-image:url(&quot;${thumbs[i]}&quot;);` : '';
-        // rev-aware unresolved comment count for this sheet (locked to the rev being
-        // viewed; in a diff, also count the compared rev). Falls back to Comments.countFor
-        // (localStorage) when the doc-wide watcher hasn't populated yet.
-        const _md = window.__docMeta || {}, _rn = _md.curRev, _dv = _md.diffRev, _lt = _md.rev || 1;
-        const _arr = (window.__sheetCounts || {})['sch:' + (M.name || '') + ':' + i];
-        const cc = _arr ? _arr.filter(r => { const e = (r == null ? _lt : r); return e === _rn || (_dv && e === _dv); }).length
-          : ((window.Comments && Comments.countFor) ? Comments.countFor('sch:' + (M.name || '') + ':' + i) : 0);
-        const cbadge = cc ? `<span title="${cc} comment${cc > 1 ? 's' : ''}" style="display:inline-flex;align-items:center;gap:2px;font-size:9.5px;font-weight:700;color:#fff;background:#F5A623;border-radius:8px;padding:0 6px;line-height:15px;font-family:'IBM Plex Mono',monospace">&#128172; ${cc}</span>` : '';
+        const cbadge = Viewer.hooks.sheetBadge ? (Viewer.hooks.sheetBadge(i) || '') : '';   // host-supplied row badge
         h += `<div class="pgrow${active ? ' active' : ''}" data-i="${i}">` +
           `<div style="width:62px;height:42px;background:#FFFFFF;${th}background-size:contain;background-repeat:no-repeat;background-position:center;border:1px solid ${active ? '#C9A97F' : '#E4E0D3'};border-radius:4px;flex-shrink:0"></div>` +
           `<div style="min-width:0;flex:1">` +
@@ -1647,7 +1636,7 @@ function computeModelDiff(oldM, newM, oldLabel) {
   return { diff: { old: oldLabel, added, removed, changed }, removedGeom: ghosts, addedWires, removedWires };
 }
 
-// Revision selector (shell mode): switch revs, open a diff against an older rev.
+// Revision selector (host-loaded pages that set window.__docMeta): switch revs, open a diff against an older rev.
 function renderRevUI() {
   const meta = window.__docMeta, el = $('tb-rev');
   if (!el || !meta || !(meta.rev > 1)) return;
@@ -1665,9 +1654,9 @@ function renderRevUI() {
   document.addEventListener('click', () => { menu.style.display = 'none'; });
 }
 
-// Entry point. Embedded builds call this immediately (see /*__BOOT__*/); the hosted
-// shell calls it from the auth+fetch controller once the model is loaded. In shell
-// mode a third argument carries an OLDER revision's model to diff against.
+// Entry point. Embedded builds call this immediately (see /*__BOOT__*/); a host-loaded
+// page calls it from its own script once the model is fetched. The optional third
+// argument carries an OLDER revision's model to diff against.
 window.__renderModel = function (model, xprobe, oldModel) {
  try {
   M = model; XP = xprobe || null;
@@ -1699,7 +1688,7 @@ window.__renderModel = function (model, xprobe, oldModel) {
 };
 /*__BOOT__*/
 </script>
-<!--__CMT_FIREBASE__-->
+<!--__EXT_TAIL__-->
 </body></html>"""
 
 
@@ -1711,7 +1700,7 @@ def main():
     ap.add_argument("--diff", type=Path, default=None,
                     help="an older .DSN to diff against")
     ap.add_argument("--offline", action="store_true",
-                    help="fully self-contained file: no web fonts, no comments backend")
+                    help="no web fonts: the file makes no network request at all")
     args = ap.parse_args()
     out = args.output or args.dsn.parent / (args.dsn.stem + "_schematic.html")
     generate(args.dsn, out, args.diff, offline=args.offline)

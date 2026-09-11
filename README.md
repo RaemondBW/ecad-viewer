@@ -24,7 +24,7 @@ needs nothing but a browser.
 | `brd_objects.py`   | `.brd` record layouts / object decoders used by `brd_convert.py` |
 | `brd_viewer.py`    | layout model builder + HTML template; `build()`, `generate()` |
 | `xprobe.py`        | schematic↔layout net/part correspondence; `generate_linked()` |
-| `comment_ui.py`    | *optional* hook for the separate commenting library (see below) |
+| `viewer_ext.py`    | host extension slots for `generate(..., ext=)` (see *Embedding*) |
 | `docs/dsn-format.md`   | reverse-engineered `.DSN` format reference |
 | `docs/brd-format.md` | reverse-engineered `.brd` format reference |
 
@@ -58,7 +58,7 @@ The `.BOM` is optional: an Bill-of-Materials text export that supplies
 per-part **values** (the `.DSN` streams don't carry them).
 
 Add `--offline` to `xprobe.py --build` (or `offline=True` in the API) to strip
-the Google-Fonts links too, so the file makes no network request at all.
+the Google-Fonts links, so the file makes no network request at all.
 
 ### Python API
 
@@ -74,17 +74,22 @@ brd_viewer.generate("board.brd", "layout.html")
 xprobe.generate_linked("board.DSN", "board.brd", "out/", bom_path=None, offline=False)
 ```
 
-## Commenting (optional)
+## Embedding in a host page
 
-Threaded comments on the viewers come from a **separate** project,
-[`canvas-comments`](https://github.com/RaemondBW/canvas-comments). This repo does
-not include it and does not need it. `comment_ui.py` looks for the library at
-`$CANVAS_COMMENTS_DIR`, then `./comments/`, then `../comments/`; if none exists
-the viewers are built with an inert `window.Comments` and the comment button is
-hidden.
+The viewers are self-contained, but a host application can extend them without
+editing the templates:
 
-To build with comments, check the library out next to this repo (or nest it as
-`comments/`, which is git-ignored here) — for example as a sibling submodule, the
-way [`bus-mime`](https://github.com/RaemondBW/bus-mime) consumes both. Hosted
-"shell" builds (`generate(..., shell=True)`, data fetched after sign-in) require
-the library and its Firebase backend.
+- **Python:** `generate(..., ext={...})` splices fragments into the page. Slots
+  (all optional): `css`, `body`, `toolbar`, `toolbar_end`, `js`, `tail` — see
+  `viewer_ext.SLOTS`. With `shell=True` the page ships **without** a model and the
+  host's `tail` script fetches one and calls
+  `window.__renderModel(model, xprobe, oldModel)`; if it also sets
+  `window.__docMeta = {rev, curRev, diffRev, revs}` the toolbar shows a revision /
+  diff selector.
+- **JavaScript:** `window.Viewer` is defined before the `js` slot runs.
+  `Viewer.on('ready' | 'view' | 'sheet', cb)` for lifecycle events;
+  `Viewer.hooks.busy()`, `Viewer.hooks.claimClick(e)`, `Viewer.hooks.sheetBadge(i)`
+  to take over the pointer or decorate the schematic's sheet list; and, once ready,
+  `Viewer.kind/name/modal/svg/stage`, `Viewer.context()`, `Viewer.project(x, y)`
+  (model → screen) and `Viewer.hitTest(clientX, clientY)` (nearest part / net /
+  pin under a screen point).

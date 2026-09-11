@@ -22,7 +22,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 import brd_convert as bc          # noqa: E402
 import brd_objects as bo          # noqa: E402
 import dsn_convert as oc        # noqa: E402
-import comment_ui                 # noqa: E402
+import viewer_ext                 # noqa: E402
 
 # marker colour + half-size (board units) per reference-designator prefix
 TYPES = {
@@ -246,23 +246,24 @@ def build(brd_path, bom_path=None):
             "types": {k: {"label": v[0], "color": v[1], "hs": v[2]} for k, v in TYPES.items()}}
 
 
-def generate(brd_path, out_path, bom_path=None, xprobe=None, model=None, shell=False, offline=False):
-    # shell=True: data-free viewer that fetches the board after sign-in (hosted, private).
-    # offline=True (embedded only): drop the Firebase/comments bootstrap + web-font links
-    # so the file makes no network request — pure self-contained viewer + cross-probe.
+def generate(brd_path, out_path, bom_path=None, xprobe=None, model=None, shell=False,
+             offline=False, ext=None):
+    """Write the layout viewer HTML.
+
+    shell=True   host-loaded: the page ships with NO model; the host's own script
+                 (passed via `ext`) must call window.__renderModel(model, xprobe[, oldModel]).
+    offline=True drop the web-font <link>s so the file makes no network request.
+    ext          host fragments spliced into the page — see viewer_ext.SLOTS.
+    """
     if shell:
-        boot, fb = "", comment_ui.shell_bootstrap("schematic-viewer", "layout")
+        boot = ""
     else:
         if model is None:
             model = build(brd_path, bom_path)
         boot = "window.__renderModel(" + json.dumps(model) + ", " + json.dumps(xprobe) + ");"
-        fb = "" if offline else comment_ui.firebase_bootstrap("schematic-viewer")
-    html = (HTML.replace("/*__BOOT__*/", boot)
-                .replace("/*__CMT_CSS__*/", comment_ui.CSS)
-                .replace("/*__CMT_JS__*/", comment_ui.JS)
-                .replace("<!--__CMT_FIREBASE__-->", fb))
+    html = viewer_ext.apply(HTML.replace("/*__BOOT__*/", boot), ext)
     if offline:
-        html = comment_ui.strip_webfonts(html)
+        html = viewer_ext.strip_webfonts(html)
     Path(out_path).write_text(html)
     if shell:
         print(f"Wrote {out_path}  (layout shell, {Path(out_path).stat().st_size // 1024} KB)")
@@ -330,21 +331,17 @@ body.modal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom/
 .pad{cursor:pointer}
 .comp.hot,.pad.hot{stroke:#FFFFFF;stroke-width:1400;paint-order:stroke}
 .clbl{fill:#EDEAE2;font-family:'IBM Plex Mono',monospace;text-anchor:middle;dominant-baseline:central;pointer-events:none;paint-order:stroke;stroke:rgba(12,18,15,.55);stroke-width:60}
-/*__CMT_CSS__*/
+/*__EXT_CSS__*/
 </style></head>
 <body>
-<div id="shell-gate" style="position:fixed;inset:0;z-index:9999;background:#FBFAF7;display:none;align-items:center;justify-content:center;flex-direction:column;font-family:'IBM Plex Sans',system-ui,sans-serif">
-  <div style="font-size:19px;font-weight:700;color:#221F1A;margin-bottom:6px">PCB Project</div>
-  <div id="shell-gate-msg" style="font-size:14px;color:#8B8578;margin-bottom:20px">Loading&hellip;</div>
-  <button id="shell-gate-btn" style="display:none;align-items:center;gap:8px;height:40px;padding:0 18px;border-radius:10px;border:1px solid #D9D4C6;background:#fff;color:#3A362E;font:600 14px 'IBM Plex Sans',system-ui,sans-serif;cursor:pointer">Sign in with Google</button>
-</div>
+<!--__EXT_BODY__-->
 <div id="bar">
   <button class="tbtn" onclick="location.href='../../'" title="Back to projects">&#8592; Projects</button>
   <button class="tbtn" id="to-sch" title="View the schematic">Schematic</button>
   <div style="width:1px;height:22px;background:var(--line,#D9D4C6);flex-shrink:0"></div>
   <div><div class="name" id="nm">PCB</div><div class="sub" id="sub"></div></div>
   <div style="flex:1"></div>
-  <button class="tbtn" id="cmt-btn" title="Add / view comments">💬 Comment</button>
+  <!--__EXT_TOOLBAR__-->
   <button class="tbtn" id="flip" title="Mirror the board horizontally (view from the back)">Flip</button>
   <button class="tbtn" id="fit">Fit</button>
   <div style="display:flex;align-items:center;border:1px solid #D9D4C6;border-radius:8px;background:#FFF;overflow:hidden">
@@ -352,9 +349,8 @@ body.modal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom/
     <span id="zl" style="font-family:'IBM Plex Mono',monospace;font-size:11px;min-width:44px;text-align:center">100%</span>
     <button class="tbtn" id="zi" style="border:none;border-radius:0">+</button>
   </div>
-  <button id="cmt-share" class="tbtn" style="display:none;flex-shrink:0" title="Share this project">Share</button>
   <div id="tb-rev" style="display:none;position:relative;flex-shrink:0"></div>
-  <div id="cmt-account" style="margin-left:6px;flex-shrink:0"></div>
+  <!--__EXT_TOOLBAR_END__-->
 </div>
 <div id="stage"><svg id="svg"><g id="scene"></g><g id="hlg"></g></svg><div id="layers"></div><div id="netlegend" style="display:none"></div></div>
 <div id="tip"></div>
@@ -363,7 +359,20 @@ body.modal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom/
   <iframe id="xframe" src="about:blank"></iframe>
 </div></div>
 <script>
-/*__CMT_JS__*/
+// ---- host integration -----------------------------------------------------------
+// A host page can extend the viewer without editing it. `Viewer.on(event, cb)`:
+// 'ready' (API populated; fires at once if already ready), 'view' (pan/zoom/flip)
+// and 'sheet' (schematic page switch). `Viewer.hooks.busy()` suppresses hover while
+// the host owns the pointer; `Viewer.hooks.claimClick(e)` consumes a click;
+// `Viewer.hooks.sheetBadge(i)` adds HTML to a sheet-list row. After 'ready' it also
+// exposes kind/name/modal/svg/stage, context(), project(x,y) → screen and
+// hitTest(clientX, clientY) → nearest item {kind,x,y,ref,label,tx,ty}.
+const Viewer = window.Viewer = { ready:false, hooks:{}, _l:{},
+  on(ev,cb){ (this._l[ev]=this._l[ev]||[]).push(cb); if(ev==='ready'&&this.ready) cb(this); },
+  emit(ev,d){ for(const f of (this._l[ev]||[])) try{ f(d); }catch(e){ console.error('[viewer] host hook failed:',e); } },
+  busy(){ const h=this.hooks.busy; return !!(h&&h()); },
+  claim(e){ const h=this.hooks.claimClick; return !!(h&&h(e)); } };
+/*__EXT_JS__*/
 const DOCID = new URLSearchParams(location.search).get('doc') || '';
 // ---- debug logging -----------------------------------------------------------
 // Tagged, timestamped console output so a user hitting a failure (a board that
@@ -392,8 +401,8 @@ window.addEventListener('unhandledrejection', e => DBG.error('unhandled rejectio
   (e.reason && (e.reason.stack || e.reason.message)) || e.reason));
 DBG.log('viewer script loaded; doc=' + (DOCID || '(embedded)') + ' url=' + location.href);
 // The whole viewer runs from __renderModel: embedded builds call it immediately
-// (see /*__BOOT__*/); the hosted shell calls it after sign-in + fetch. The comment
-// library above stays synchronous so the backend can attach to window.Comments.
+// (see /*__BOOT__*/); a host-loaded page calls it from its own script (ext.tail)
+// once it has fetched the model.
 window.__renderModel = function (model, xprobe, oldModel) {
 try {
 const M = model, XP = xprobe || null;   // XP: {xnets, companion, ...} or null
@@ -406,7 +415,7 @@ DBG.log('renderModel: model stats =', {
   netNames: M && M.netNames ? M.netNames.length : 0,
   layers: M && M.layers, xprobe: !!XP, standalone: !!(XP && XP.standalone),
   hasOldModel: !!oldModel });
-// revision diff (shell mode): compare part placement + counts against an older rev
+// revision diff (host-loaded pages): compare part placement + counts against an older rev
 const DIFF = (function(){
   if(!oldModel) return null;
   const stride = m => m.netNames ? 7 : 6, vstride = m => m.netNames ? 4 : 3;
@@ -440,7 +449,7 @@ let flipped=false;                              // horizontal mirror: view the b
 const FX = x => flipped ? (x0 + x1 - x) : x;    // involution around the board centre
 let showOutline=true;
 let view={x:0,y:0,k:1};
-function applyView(){ const t=`translate(${view.x},${view.y}) scale(${view.k})`; scene.setAttribute('transform',t); hlg.setAttribute('transform',t); document.getElementById('zl').textContent=Math.round(view.k*100/baseK)+'%'; Comments.reproject(); }
+function applyView(){ const t=`translate(${view.x},${view.y}) scale(${view.k})`; scene.setAttribute('transform',t); hlg.setAttribute('transform',t); document.getElementById('zl').textContent=Math.round(view.k*100/baseK)+'%'; Viewer.emit('view'); }
 let baseK=1;
 function esc(s){return (s+'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 
@@ -707,7 +716,7 @@ function pickTraceNet(bx,by){
   return (best>=0 && bd<tol) ? traceRoot(best) : null;
 }
 function boardXY(e){ const r=svg.getBoundingClientRect(); const sx=(e.clientX-r.left-view.x)/view.k, sy=(e.clientY-r.top-view.y)/view.k; return [FX(sx), y1-sy]; }
-// nearest pad / trace to a board point — used to snap a comment to the closest item
+// nearest pad / trace to a board point — Viewer.hitTest uses these to point at the closest item
 function _closestOnSeg(px,py,ax,ay,bx,by){ const dx=bx-ax,dy=by-ay,l2=dx*dx+dy*dy; let t=l2?((px-ax)*dx+(py-ay)*dy)/l2:0; t=Math.max(0,Math.min(1,t)); return [ax+t*dx,ay+t*dy]; }
 function nearestPad(bx,by){ let bd=1e30,best=null;   // nearest by pad rect; point at the PART centre
   for(const pt of M.parts){ if(hiddenLayers.has(pt.side?_LN[_LN.length-1]:_LN[0])) continue;
@@ -788,7 +797,7 @@ svg.addEventListener('pointermove',e=>{
   if(MODALMODE)return;
   if(down && Math.abs(e.clientX-down.x)+Math.abs(e.clientY-down.y)>4) down.moved=true;
   if(drag){ view.x=drag.vx+e.clientX-drag.x; view.y=drag.vy+e.clientY-drag.y; applyView(); return; }
-  if(!pinned() && !Comments.isPlacing()){           // hover-highlight when nothing is pinned
+  if(!pinned() && !Viewer.busy()){           // hover-highlight when nothing is pinned
     const p=pick(e), key=p?(p.ref?'r:'+p.ref:'n:'+p.net):null;
     if(key!==hoverKey){ hoverKey=key; hoverRef=p&&p.ref||null; hoverNet=(p&&p.net!=null)?new Set([p.net]):null; updateHighlight();
       if(p&&p.ref){ const pt=_byRef[p.ref], ty=pt&&M.types[pt.t];   // part → refdes + value + type
@@ -808,7 +817,7 @@ svg.addEventListener('pointerleave',()=>{ clearTimeout(_peekT); if(modal._peek) 
 svg.addEventListener('pointerup',e=>{
   if(MODALMODE)return;
   if(down && !down.moved){
-    if(Comments.isPlacing()){ Comments.place(e.clientX,e.clientY); drag=null; down=null; return; }
+    if(Viewer.claim(e)){ drag=null; down=null; return; }
     const p=pick(e); hoverKey=null; hoverRef=null; hoverNet=null;
     if(!p){ pinnedList=[]; pinnedRef=null; syncPinnedNet(); updateHighlight(); renderNetLegend(); hideModal(); }
     else if(p.ref){                                 // a part → highlight it + preview it in the schematic
@@ -829,7 +838,7 @@ svg.addEventListener('wheel',e=>{ if(MODALMODE)return; e.preventDefault(); const
 document.getElementById('fit').onclick=fit;
 if(XP&&XP.companion) document.getElementById('to-sch').onclick=()=>location.href=schematicHref();
 else document.getElementById('to-sch').style.display='none';
-document.getElementById('flip').onclick=e=>{ flipped=!flipped; e.currentTarget.style.background=flipped?'#EFE9DB':''; render(); if(window.Comments&&Comments.reproject) Comments.reproject(); };
+document.getElementById('flip').onclick=e=>{ flipped=!flipped; e.currentTarget.style.background=flipped?'#EFE9DB':''; render(); Viewer.emit('view'); };
 document.getElementById('zi').onclick=()=>zoomBy(1.3);
 document.getElementById('zo').onclick=()=>zoomBy(0.77);
 window.addEventListener('resize',fit);
@@ -880,16 +889,12 @@ if(DIFF){ const el=document.getElementById('sub');
   document.getElementById('tb-rev-btn').onclick=e=>{e.stopPropagation();menu.style.display=menu.style.display==='none'?'block':'none';};
   document.addEventListener('click',()=>{menu.style.display='none';});
 })();
-// ---- comments: anchor to a pad (part), a trace's net, or an open point ----
-if(!MODALMODE) window.__cmtContext='brd:'+(M.name||'');   // shared with the Firebase backend bootstrap
-if(!MODALMODE) Comments.init({
-  context:window.__cmtContext, svg:svg, stage:document.getElementById('stage'),
-  rev:()=>(window.__docMeta||{}).curRev||1,          // comments locked to their rev
-  latestRev:()=>(window.__docMeta||{}).rev||1,       // legacy (unversioned) comments belong to latest
-  diffRev:()=>(window.__docMeta||{}).diffRev||null,  // diff view shows both (new / gone)
-  button:document.getElementById('cmt-btn'),
+// ---- host API: model→screen projection and what's under a screen point ----
+Object.assign(Viewer, {
+  kind:'layout', name:M.name||'', modal:MODALMODE, svg:svg, stage:document.getElementById('stage'),
+  context:()=>'brd:'+(M.name||''),
   project:(x,y)=>({sx:FX(x)*view.k+view.x, sy:flipY(y)*view.k+view.y}),
-  resolveAnchor:(cx,cy)=>{
+  hitTest:(cx,cy)=>{
     const r=svg.getBoundingClientRect();
     const bx=FX((cx-r.left-view.x)/view.k), by=y1-((cy-r.top-view.y)/view.k);
     const tol=90/view.k;                       // how near an item must be to point at it
@@ -900,6 +905,7 @@ if(!MODALMODE) Comments.init({
     return {kind:'point',x:bx,y:by,label:'Open space'};
   }
 });
+Viewer.ready=true; Viewer.emit('ready',Viewer);
 // apply a cross-probe target (from ?xnet/?ref on load, or a postMessage from an
 // embedding parent so a live preview can update without reloading the page).
 let _curKeep=undefined;                            // currently isolated layer (null=all shown)
@@ -943,7 +949,7 @@ DBG.log('renderModel: completed OK');
 };   // end window.__renderModel
 /*__BOOT__*/
 </script>
-<!--__CMT_FIREBASE__-->
+<!--__EXT_TAIL__-->
 </body></html>
 """
 
@@ -956,7 +962,7 @@ def main():
     ap.add_argument("--bom", type=Path, default=None,
                     help="BOM text export for values (default: sibling <stem>.BOM)")
     ap.add_argument("--offline", action="store_true",
-                    help="fully self-contained file: no web fonts, no comments backend")
+                    help="no web fonts: the file makes no network request at all")
     args = ap.parse_args()
     out = args.output or args.brd.parent / (args.brd.stem + "_pcb.html")
     bom = args.bom

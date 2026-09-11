@@ -197,11 +197,13 @@ def _match(sch, lay):
 
 
 def generate_linked(dsn_path, brd_path, out_dir, bom_path=None,
-                    sch_name="schematic.html", pcb_name="pcb.html", offline=False):
+                    sch_name="schematic.html", pcb_name="pcb.html", offline=False,
+                    sch_ext=None, lay_ext=None):
     """Generate both viewers wired for cross-probing. The layout model is built
     once and shared with the correspondence so the embedded xnet coordinates
-    match the rendered geometry exactly. offline=True makes both files fully
-    self-contained (no network / backend); see generate(offline=…)."""
+    match the rendered geometry exactly. offline=True strips the web fonts so
+    both files make no network request; sch_ext/lay_ext are host fragments for
+    each page (see viewer_ext)."""
     import brd_viewer, dsn_viewer
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -225,10 +227,10 @@ def generate_linked(dsn_path, brd_path, out_dir, bom_path=None,
     # hosted dashboard), so the top Schematic/Layout button targets the companion file.
     brd_viewer.generate(brd_path, out / pcb_name, bom_path,
                         xprobe={"xnets": payload, "companion": sch_name, "standalone": True},
-                        model=model, offline=offline)
+                        model=model, offline=offline, ext=lay_ext)
     dsn_viewer.generate(dsn_path, out / sch_name,
                           xprobe={"xnets": payload, "companion": pcb_name, "layoutRefs": lay_refs,
-                                  "standalone": True}, offline=offline)
+                                  "standalone": True}, offline=offline, ext=sch_ext)
     ex = sum(1 for x in xnets if x["exact"])
     print(f"linked {len(payload)} nets ({ex} exact-name, {len(payload) - ex} fuzzy) "
           f"of {ns} schematic / {nl} layout nets")
