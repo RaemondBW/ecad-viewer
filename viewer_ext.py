@@ -6,6 +6,7 @@ slots, so a host can add its own chrome, styles and scripts (and, with
 
     css          inside the page <style>
     body         first thing inside <body> (overlays, gates)
+    toolbar_start leftmost toolbar item (e.g. a link back to the host's dashboard)
     toolbar      in the toolbar, left of the view controls
     toolbar_end  at the right end of the toolbar
     js           inside the main <script>, right after `window.Viewer` is defined
@@ -20,6 +21,7 @@ import re
 SLOTS = {
     "css": "/*__EXT_CSS__*/",
     "body": "<!--__EXT_BODY__-->",
+    "toolbar_start": "<!--__EXT_TOOLBAR_START__-->",
     "toolbar": "<!--__EXT_TOOLBAR__-->",
     "toolbar_end": "<!--__EXT_TOOLBAR_END__-->",
     "js": "/*__EXT_JS__*/",

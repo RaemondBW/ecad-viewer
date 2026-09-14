@@ -80,7 +80,8 @@ The viewers are self-contained, but a host application can extend them without
 editing the templates:
 
 - **Python:** `generate(..., ext={...})` splices fragments into the page. Slots
-  (all optional): `css`, `body`, `toolbar`, `toolbar_end`, `js`, `tail` — see
+  (all optional): `css`, `body`, `toolbar_start`, `toolbar`, `toolbar_end`, `js`,
+  `tail` — see
   `viewer_ext.SLOTS`. With `shell=True` the page ships **without** a model and the
   host's `tail` script fetches one and calls
   `window.__renderModel(model, xprobe, oldModel)`; if it also sets

@@ -336,7 +336,7 @@ body.modal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom/
 <body>
 <!--__EXT_BODY__-->
 <div id="bar">
-  <button class="tbtn" onclick="location.href='../../'" title="Back to projects">&#8592; Projects</button>
+  <!--__EXT_TOOLBAR_START__-->
   <button class="tbtn" id="to-sch" title="View the schematic">Schematic</button>
   <div style="width:1px;height:22px;background:var(--line,#D9D4C6);flex-shrink:0"></div>
   <div><div class="name" id="nm">PCB</div><div class="sub" id="sub"></div></div>

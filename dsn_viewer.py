@@ -301,7 +301,7 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
   <!-- toolbar -->
   <div class="xtop" style="display:flex;align-items:center;gap:12px;height:54px;padding:0 14px;background:#FBFAF7;border-bottom:1px solid #E0DCD1;flex-shrink:0;z-index:40;position:relative">
     <button id="tb-sheets-btn" class="tbtn" style="display:none">Sheets</button>
-    <button class="tbtn" onclick="location.href='../'" title="Back to projects" style="flex-shrink:0">&#8592; Projects</button>
+    <!--__EXT_TOOLBAR_START__-->
     <button class="tbtn" id="to-lay" title="View the board layout" style="flex-shrink:0">Layout</button>
     <div style="width:1px;height:26px;background:#E0DCD1;flex-shrink:0"></div>
     <div style="display:flex;flex-direction:column;gap:1px;min-width:0">
@@ -1164,7 +1164,8 @@ function selectSheet(i) {
   cur = i; selDes = null;
   renderScene(); fit(); updChrome(); renderSidebar(); renderInspector();
 }
-function goToPart(si, des) {
+function goToPart(si, des) {   // explicit selection (search, BOM, deep link): full card, stays open
+  cardPinned = true;
   if (si !== cur) { cur = si; selDes = des; renderScene(); fit(); updChrome(); renderSidebar(); centerPart(des); }
   else { selDes = des; centerPart(des); }
   updateSelMark(); renderInspector();
@@ -1427,6 +1428,7 @@ function renderInspector() {
   const inLayout = !(XP && XP.layoutRefs) || layoutRefs.has(sel.des);
   driveFrame(inLayout && XP && XP.companion ? { ref: sel.des, href: companionHref({ ref: sel.des }) } : null);
   const diffNote = diffReason(selDes).trim();
+  const showPins = cardPinned;   // hover card stays compact; a clicked / searched / linked part gets the pin table
   const pins = [];
   secs.forEach((sc, k) => (sc.p.pins || []).forEach(pin => pins.push({
     num: pin[3] || '·', name: pin[4] || '—',
@@ -1439,7 +1441,7 @@ function renderInspector() {
   const kindNote = multi
     ? (allTwoPin && /^[RCL]/i.test(sel.des)
         ? `${{R:'Resistor',C:'Capacitor',L:'Inductor'}[sel.des[0].toUpperCase()]} array · ${secs.length} × ${sel.val || '?'} in one package`
-        : `${secs.length} sections on the schematic — one physical device (${pins.length} pins shown)`)
+        : `${secs.length} sections on the schematic — one physical device${showPins ? ` (${pins.length} pins shown)` : ''}`)
     : '';
   $('ins-card').innerHTML =
     `<div style="padding:8px 16px 12px;border-bottom:1px solid #EAE6DA">` +
@@ -1453,6 +1455,7 @@ function renderInspector() {
     (inLayout ? '' : `<div style="margin-top:6px;font-size:11px;color:#A19B8E">Not placed in this layout.</div>`) +
     (diffNote ? `<div style="margin-top:6px;font-size:11px;color:#9A6700;font-family:'IBM Plex Mono',monospace;white-space:pre-line">${esc(diffNote)}</div>` : '') +
     `</div>` +
+    (!showPins ? `<div style="padding:8px 16px 12px;font-size:11px;color:#A19B8E">Click the part for its pins and nets.</div>` :
     `<div style="padding:8px 8px 14px">` +
     `<div style="font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#8B8578;padding:2px 8px 6px">Pins · ${pins.length}${multi ? ` · ${secs.length} sections` : ''}</div>` +
     pins.map((pn, i) =>
@@ -1462,7 +1465,7 @@ function renderInspector() {
       `<span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#A19B8E;text-align:right;padding-top:2px">${esc(pn.num)}</span>` +
       `<span style="min-width:0"><span style="display:block;font-size:11.5px;color:#221F1A;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(pn.name)}</span>` +
       `<span style="display:block;font-family:'IBM Plex Mono',monospace;font-size:10px;color:#4338CA;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(pn.net)}</span></span></div>`
-    ).join('') + `</div>`;
+    ).join('') + `</div>`);
   [...ins.querySelectorAll('.pinrow')].forEach(el => {
     const k = pins[+el.dataset.i].key;
     el.addEventListener('click', () => { if (k) togglePin(k); });
