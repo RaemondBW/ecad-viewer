@@ -235,7 +235,7 @@ html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#E9E7E1;
 .sch-scene .comp .sym.fill{fill:var(--p-comp)}
 .sch-scene .comp .lead{stroke:var(--p-comp);stroke-width:1;vector-effect:non-scaling-stroke}
 .sch-scene .comp .hit{fill:transparent;stroke:none}
-.sch-scene .comp text{fill:var(--p-comp);font-family:'IBM Plex Mono',monospace;text-anchor:middle;dominant-baseline:middle}
+.sch-scene .comp text:not(.pinname):not(.pinnum){fill:var(--p-comp);font-family:'IBM Plex Mono',monospace;text-anchor:middle;dominant-baseline:middle}
 .sch-scene .comp .lbl,.sch-scene .comp .val,.sch-scene .comp .pinname{font-family:'IBM Plex Mono',monospace;fill:var(--p-comp)}
 .sch-scene .comp .pinnum{font-family:'IBM Plex Mono',monospace;fill:var(--p-pinnum)}
 .sch-scene .nlabel{fill:var(--p-net);font-family:'IBM Plex Mono',monospace;dominant-baseline:middle}
@@ -633,16 +633,30 @@ body.xmodal #svg{pointer-events:none}   /* embedded preview: static, no pan/zoom
           const lab = nm || num;            // primary label = name, else the number
           if (!lab) continue;
           const px = pin[0], py = pin[1];
-          // Left/right-align each pin label to the box edge on the pin's side (by which
-          // half of the box the pin sits in), so the names line up along the left and
-          // right edges like a real IC. Small inset so the text just clears the border.
-          const m = pnf * 0.3;   // flush: labels line up just inside the part edge
-          let tx, nameY = py, anchor;
-          if (px < bx + bw / 2) { tx = bx + m; anchor = 'start'; }
-          else { tx = bx + bw - m; anchor = 'end'; }
-          h += `<text class="pinname" x="${tx.toFixed(1)}" y="${nameY.toFixed(1)}" font-size="${pnf.toFixed(1)}" text-anchor="${anchor}" dominant-baseline="central">${esc(lab)}</text>`;
-          if (nm && num && num !== nm) {     // pin number above the name (skip if identical)
-            h += `<text class="pinnum" x="${tx.toFixed(1)}" y="${(nameY - pnf * 0.92).toFixed(1)}" font-size="${nnf.toFixed(1)}" text-anchor="${anchor}" dominant-baseline="central">${esc(num)}</text>`;
+          // Labels sit INSIDE the box, flush-aligned to the side the pin enters from
+          // (nearest edge): start-anchored on the left, end-anchored on the right,
+          // rotated to read upward on the top/bottom edges. When the pin number differs
+          // from the name it sits between the edge and the name, in a muted tone.
+          const dl = Math.abs(px - bx), dr = Math.abs(px - (bx + bw)), dt = Math.abs(py - by), db = Math.abs(py - (by + bh));
+          const side = Math.min(dl, dr) <= Math.min(dt, db) ? (dl <= dr ? 'L' : 'R') : (dt <= db ? 'T' : 'B');
+          const m = pnf * 0.55;                                            // inset from the border
+          const showNum = !!(nm && num && num !== nm);
+          const numW = showNum ? (num.length + 0.7) * nnf * 0.62 : 0;      // mono glyph ≈ 0.62em, plus a gap
+          const put = (x, y, rot, anchor, txt, cls, fs) =>
+            `<text class="${cls}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" font-size="${fs.toFixed(1)}" text-anchor="${anchor}" dominant-baseline="central"` +
+            (rot ? ` transform="rotate(-90 ${x.toFixed(1)} ${y.toFixed(1)})"` : '') + `>${esc(txt)}</text>`;
+          if (side === 'L') {
+            if (showNum) h += put(bx + m, py, false, 'start', num, 'pinnum', nnf);
+            h += put(bx + m + numW, py, false, 'start', lab, 'pinname', pnf);
+          } else if (side === 'R') {
+            if (showNum) h += put(bx + bw - m, py, false, 'end', num, 'pinnum', nnf);
+            h += put(bx + bw - m - numW, py, false, 'end', lab, 'pinname', pnf);
+          } else if (side === 'B') {                                       // reads upward from the bottom edge
+            if (showNum) h += put(px, by + bh - m, true, 'start', num, 'pinnum', nnf);
+            h += put(px, by + bh - m - numW, true, 'start', lab, 'pinname', pnf);
+          } else {                                                         // top: reads upward, ends at the top edge
+            if (showNum) h += put(px, by + m, true, 'end', num, 'pinnum', nnf);
+            h += put(px, by + m + numW, true, 'end', lab, 'pinname', pnf);
           }
         }
       }
@@ -1164,8 +1178,7 @@ function selectSheet(i) {
   cur = i; selDes = null;
   renderScene(); fit(); updChrome(); renderSidebar(); renderInspector();
 }
-function goToPart(si, des) {   // explicit selection (search, BOM, deep link): full card, stays open
-  cardPinned = true;
+function goToPart(si, des) {
   if (si !== cur) { cur = si; selDes = des; renderScene(); fit(); updChrome(); renderSidebar(); centerPart(des); }
   else { selDes = des; centerPart(des); }
   updateSelMark(); renderInspector();
@@ -1428,20 +1441,13 @@ function renderInspector() {
   const inLayout = !(XP && XP.layoutRefs) || layoutRefs.has(sel.des);
   driveFrame(inLayout && XP && XP.companion ? { ref: sel.des, href: companionHref({ ref: sel.des }) } : null);
   const diffNote = diffReason(selDes).trim();
-  const showPins = cardPinned;   // hover card stays compact; a clicked / searched / linked part gets the pin table
-  const pins = [];
-  secs.forEach((sc, k) => (sc.p.pins || []).forEach(pin => pins.push({
-    num: pin[3] || '·', name: pin[4] || '—',
-    net: pin[2] ? (netName(pin[2]) || pin[2]) : '(unconnected)', key: pin[2] || '',
-    sec: k, secSheet: sc.si,
-  })));
   // device-kind note: N two-pin sections of an R/C/L = an array in one package
   const multi = secs.length > 1;
   const allTwoPin = multi && secs.every(sc => (sc.p.pins || []).length === 2);
   const kindNote = multi
     ? (allTwoPin && /^[RCL]/i.test(sel.des)
         ? `${{R:'Resistor',C:'Capacitor',L:'Inductor'}[sel.des[0].toUpperCase()]} array · ${secs.length} × ${sel.val || '?'} in one package`
-        : `${secs.length} sections on the schematic — one physical device${showPins ? ` (${pins.length} pins shown)` : ''}`)
+        : `${secs.length} sections on the schematic — one physical device`)
     : '';
   $('ins-card').innerHTML =
     `<div style="padding:8px 16px 12px;border-bottom:1px solid #EAE6DA">` +
@@ -1454,24 +1460,7 @@ function renderInspector() {
     (kindNote ? `<div style="margin-top:6px;font-size:11px;color:#2563a8;line-height:1.4">${esc(kindNote)}</div>` : '') +
     (inLayout ? '' : `<div style="margin-top:6px;font-size:11px;color:#A19B8E">Not placed in this layout.</div>`) +
     (diffNote ? `<div style="margin-top:6px;font-size:11px;color:#9A6700;font-family:'IBM Plex Mono',monospace;white-space:pre-line">${esc(diffNote)}</div>` : '') +
-    `</div>` +
-    (!showPins ? `<div style="padding:8px 16px 12px;font-size:11px;color:#A19B8E">Click the part for its pins and nets.</div>` :
-    `<div style="padding:8px 8px 14px">` +
-    `<div style="font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#8B8578;padding:2px 8px 6px">Pins · ${pins.length}${multi ? ` · ${secs.length} sections` : ''}</div>` +
-    pins.map((pn, i) =>
-      (multi && (i === 0 || pins[i - 1].sec !== pn.sec)
-        ? `<div style="font-size:9.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#B7AF9C;padding:7px 8px 2px">Section ${pn.sec + 1} · ${esc(sheetLabel(pn.secSheet))}</div>` : '') +
-      `<div class="pinrow" data-i="${i}" style="display:grid;grid-template-columns:30px 1fr;gap:2px 8px;padding:5px 8px;border-radius:6px;cursor:pointer">` +
-      `<span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#A19B8E;text-align:right;padding-top:2px">${esc(pn.num)}</span>` +
-      `<span style="min-width:0"><span style="display:block;font-size:11.5px;color:#221F1A;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(pn.name)}</span>` +
-      `<span style="display:block;font-family:'IBM Plex Mono',monospace;font-size:10px;color:#4338CA;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(pn.net)}</span></span></div>`
-    ).join('') + `</div>`);
-  [...ins.querySelectorAll('.pinrow')].forEach(el => {
-    const k = pins[+el.dataset.i].key;
-    el.addEventListener('click', () => { if (k) togglePin(k); });
-    el.addEventListener('mouseenter', () => previewNet(k));   // highlight net in main view
-    el.addEventListener('mouseleave', clearPreview);
-  });
+    `</div>`;
   if (si === cur) positionInspectorNear(sel.des);   // float next to the part
 }
 function renderBom() {
